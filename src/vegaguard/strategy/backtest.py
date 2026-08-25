@@ -23,7 +23,12 @@ MAX_QUOTE_AGE = timedelta(minutes=15)
 
 def _timestamp(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
-    return parsed.astimezone(UTC)
+    return _as_utc(parsed)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Interpret date-only CLI values as UTC, never the host machine's timezone."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _load_records(directory: Path, name: str) -> list[dict[str, Any]]:
@@ -146,8 +151,8 @@ class HistoricalBacktester:
     ) -> None:
         self.data_dir = Path(data_dir)
         self.symbols = [symbol.upper() for symbol in symbols]
-        self.start = start.astimezone(UTC)
-        self.end = end.astimezone(UTC)
+        self.start = _as_utc(start)
+        self.end = _as_utc(end)
         self.initial_equity = initial_equity
         if max_open_positions < 1 or max_contracts_per_trade < 1:
             raise ValueError("position limits must be positive")
