@@ -62,3 +62,9 @@ The first slice implements the safety-critical domain model, deterministic risk 
 - [Multi-leg options](https://docs.alpaca.markets/us/docs/options-level-3-trading)
 - [Paper trading](https://docs.alpaca.markets/us/docs/paper-trading)
 
+## Build documents
+
+- [Master Alpaca hackathon reference](docs/ALPACA_HACKATHON_MASTER.md)
+- [P&L trading strategy](docs/TRADING_STRATEGY.md)
+- [Architecture and implementation plan](docs/ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md)
+- [Winning product specification](docs/VEGAGUARD_WINNING_SPEC.md)
