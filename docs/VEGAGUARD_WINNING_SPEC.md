@@ -2,13 +2,13 @@
 
 ## One-line pitch
 
-**VegaGuard is an autonomous paper-options portfolio manager that makes a trade only when an AI investment committee agrees on an evidence-backed, defined-risk vertical spread—and continuously grades the decision against a shadow alternative to improve its next trade.**
+**VegaGuard is an autonomous paper-options portfolio manager that turns a volatility-filtered ETF momentum signal into defined-risk vertical spreads, then continuously grades every decision against a shadow alternative to improve the next trade.**
 
 ## The decision
 
 We are **not** building a generic “ask an AI to buy AAPL” chatbot. That is easy to copy and not strong enough on originality.
 
-We are building a controlled **agentic options committee**. It has real execution, real paper P&L, real options structures, a visible Alpaca MCP integration, and a learning loop judges can inspect.
+We are building a controlled **agentic options portfolio**. It has a clear P&L hypothesis, real paper execution, real multi-leg option structures, visible Alpaca MCP integration, and a learning loop judges can inspect.
 
 ```mermaid
 flowchart TD
@@ -34,11 +34,11 @@ flowchart TD
 
 ### Universe
 
-Start with **SPY, QQQ, IWM**. They are liquid, option-rich and easy to explain. Expand only after trade-state monitoring is stable.
+Start with **SPY, QQQ, IWM**. Add XLK, XLF and XLE only after trade-state monitoring is stable. They are liquid, option-rich and make the strategy testable across broad and sector regimes.
 
 ### Signal
 
-The Regime Scout consumes daily and intraday underlying bars, realized volatility, option-chain bid/ask, Greeks and implied volatility.
+The Regime Scout consumes daily and intraday underlying bars, realized volatility, option-chain bid/ask, Greeks and implied volatility. It scores aligned daily regime, 30-minute trend, volume confirmation, volatility state and market alignment; only an absolute score of 70/100 can reach the committee.
 
 It produces an `OpportunityCard` with:
 
@@ -66,7 +66,7 @@ The project does **not** sell naked options, chase zero-DTE contracts, or use a 
 - one spread maximum per underlying
 - at most 3 open positions
 - one spread / one contract at a time at launch
-- maximum debit / loss: $125 per trade
+- initial maximum debit / loss: $500 per trade (0.5% equity risk budget)
 - reject wide bid-ask spreads, stale quotes, invalid contracts and low buying power
 - no entries close to expiry; mandatory time exit before expiry
 - take-profit, stop-loss, time-stop and thesis-invalidation exit are all deterministic
@@ -125,13 +125,13 @@ This produces agent reliability scores that change future confidence thresholds.
 
 ## Build order
 
-1. Replace the current single-leg plan builder with atomic bull-call / bear-put debit-spread construction.
-2. Add strict chain normalization, expected-move calculation, bid/ask freshness and delta selection.
-3. Add `trade_updates` monitoring and position guardian exit rules.
-4. Add the shadow trade ledger and auditor metrics.
-5. Build the dashboard last; the proof is the live decision loop, not UI polish.
+1. Implement the volatility-filtered ETF signal score in [the strategy specification](TRADING_STRATEGY.md).
+2. Replace the current single-leg plan builder with atomic bull-call / bear-put debit-spread construction.
+3. Add strict chain normalization, expected-move calculation, bid/ask freshness and delta selection.
+4. Add `trade_updates` monitoring and deterministic profit, stop and time exits.
+5. Add the shadow trade ledger and auditor metrics.
+6. Build the dashboard last; the proof is the live decision loop, not UI polish.
 
 ## Definition of done
 
 The project is demo-ready only when it can autonomously select **or reject** a real opportunity, place a valid paper multi-leg options order through the MCP server, monitor it with Alpaca events, explain each risk decision, and display the shadow-audit result.
-
