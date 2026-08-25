@@ -80,15 +80,36 @@ stale/missing quotes or Greeks, and missing IV history. It will label output
 inputs cannot support a real point-in-time option backtest. Alpaca's historical option data starts
 in February 2024; free indicative data is delayed and modified relative to OPRA.
 
+See [historical data limitations](docs/HISTORICAL_DATA_LIMITATIONS.md) for the current snapshot/IV
+and contract-metadata boundary. The fetcher derives static OCC metadata only from a historical
+quote that proves the contract existed at the decision time.
+
+### Read-only paper-account verification
+
+This command queries paper account state and the full deterministic scan inputs, but does not call
+OpenAI, MCP, or any order endpoint:
+
+```bash
+vegaguard live read-only-cycle
+```
+
+The first scan correctly reports no trade because it needs a second fresh snapshot observation to
+form an IV state. Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
+is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
+the backtester.
+
 ## Current scope
 
-The first slice implements the safety-critical domain model, deterministic risk gate, durable decision journal, OpenAI thesis-agent contract, and a real MCP stdio client that dynamically discovers and calls Alpaca v2 tools. The next slice wires live option-chain normalization and `trade_updates` into the API cycle.
+The current implementation includes a shared live/replay deterministic scorer, defined-risk debit
+spread construction, a read-only Alpaca paper-data cycle, and a paper `trade_updates` monitor that
+journals lifecycle events and emits deterministic exit decisions. Credentials and recorded
+read-only output are still required to claim any Alpaca/OpenAI integration was externally verified.
 
 ## Important controls
 
 - The LLM cannot choose an arbitrary size, ignore buying power, bypass a failed gate, or call destructive portfolio-wide tools.
 - All executable plans use a unique `client_order_id` and get written to `data/journal.jsonl` before submission.
-- The agent should use defined-risk debit spreads once live chain selection is wired; no naked option-selling strategy is in scope.
+- The risk gate accepts only defined-risk debit spreads; no naked option-selling strategy is in scope.
 - Do not use live keys. The MCP server defaults to paper, but the app also validates the paper setting explicitly.
 
 ## Official references

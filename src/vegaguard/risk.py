@@ -33,8 +33,10 @@ class DeterministicRiskGate:
             reasons.append("maximum open positions reached")
         if buying_power < plan.max_loss_usd:
             reasons.append("insufficient buying power for defined maximum loss")
-        if plan.strategy == "single_leg" and plan.legs[0].side.value != "buy":
-            reasons.append("single-leg short options are outside VegaGuard scope")
+        if plan.strategy != "debit_spread":
+            reasons.append("VegaGuard execution only permits defined-risk debit spreads")
+        elif {leg.side.value for leg in plan.legs} != {"buy", "sell"}:
+            reasons.append("debit spread must include one bought and one sold option leg")
         return GateResult(
             approved=not reasons, reasons=reasons or ["all deterministic checks passed"]
         )

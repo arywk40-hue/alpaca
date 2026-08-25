@@ -16,10 +16,11 @@ class Settings(BaseSettings):
     allow_order_execution: bool = False
     max_open_positions: int = Field(default=3, ge=1)
     max_contracts_per_trade: int = Field(default=1, ge=1)
-    max_trade_risk_usd: float = Field(default=125.0, gt=0)
-    max_bid_ask_spread_pct: float = Field(default=0.18, gt=0, le=1)
-    min_dte: int = Field(default=7, ge=1)
-    max_dte: int = Field(default=35, ge=1)
+    risk_fraction_per_trade: float = Field(default=0.005, gt=0, le=0.02)
+    max_trade_risk_usd: float = Field(default=500.0, gt=0)
+    max_bid_ask_spread_pct: float = Field(default=0.08, gt=0, le=1)
+    min_dte: int = Field(default=14, ge=1)
+    max_dte: int = Field(default=28, ge=1)
     underlying_universe: str = "SPY,QQQ,IWM"
 
     @field_validator("max_dte")

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import httpx
@@ -47,8 +48,31 @@ class AlpacaRESTClient:
             f"/v2/stocks/{symbol}/bars",
             {"timeframe": "1Day", "limit": limit, "feed": "iex"},
         )
-        return data.get("bars", {}).get(symbol, [])
+        bars = data.get("bars", [])
+        return bars.get(symbol, []) if isinstance(bars, dict) else bars
+
+    async def intraday_bars(self, symbol: str, limit: int = 64) -> list[dict]:
+        data = await self._get(
+            self.data_base_url,
+            f"/v2/stocks/{symbol}/bars",
+            {"timeframe": "30Min", "limit": limit, "feed": "iex", "sort": "asc"},
+        )
+        bars = data.get("bars", [])
+        return bars.get(symbol, []) if isinstance(bars, dict) else bars
 
     async def option_snapshots(self, underlying: str) -> dict[str, dict]:
         data = await self._get(self.data_base_url, f"/v1beta1/options/snapshots/{underlying}")
         return data.get("snapshots", {})
+
+    async def market_snapshot(
+        self, underlying: str
+    ) -> tuple[list[dict], list[dict], list[dict], dict]:
+        """Fetch the complete, read-only inputs required by the deterministic scanner."""
+        market_symbol = "SPY" if underlying != "SPY" else underlying
+        daily, intraday, market_daily, snapshots = await asyncio.gather(
+            self.daily_bars(underlying, limit=30),
+            self.intraday_bars(underlying, limit=64),
+            self.daily_bars(market_symbol, limit=30),
+            self.option_snapshots(underlying),
+        )
+        return daily, intraday, market_daily, snapshots

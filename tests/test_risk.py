@@ -31,11 +31,16 @@ def plan(*, dte: int = 14, bid: float = 2.0, ask: float = 2.1, qty: int = 1) -> 
     )
     return TradePlan(
         underlying="SPY",
-        strategy="single_leg",
+        strategy="debit_spread",
         legs=[
             OptionLeg(
                 symbol=candidate.symbol, side=Side.BUY, position_intent=PositionIntent.BUY_TO_OPEN
-            )
+            ),
+            OptionLeg(
+                symbol="SPY260918C00655000",
+                side=Side.SELL,
+                position_intent=PositionIntent.SELL_TO_OPEN,
+            ),
         ],
         qty=qty,
         limit_price=2.05,
@@ -59,3 +64,14 @@ def test_blocks_wide_spread_and_expiry_risk():
     assert not result.approved
     assert any("DTE" in reason for reason in result.reasons)
     assert any("spread" in reason for reason in result.reasons)
+
+
+def test_blocks_single_leg_execution_even_when_other_rules_pass():
+    single_leg = plan()
+    single_leg.strategy = "single_leg"
+    single_leg.legs = single_leg.legs[:1]
+    result = DeterministicRiskGate(Settings()).assess(
+        single_leg, market_open=True, open_positions=0, buying_power=5_000
+    )
+    assert not result.approved
+    assert "defined-risk debit spreads" in result.reasons[0]

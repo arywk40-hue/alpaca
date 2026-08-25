@@ -79,6 +79,11 @@ class TradePlan(BaseModel):
             raise ValueError("single_leg plans need exactly one leg")
         if self.strategy == "debit_spread" and len(self.legs) != 2:
             raise ValueError("debit_spread plans need exactly two legs")
+        if self.strategy == "debit_spread" and {leg.side for leg in self.legs} != {
+            Side.BUY,
+            Side.SELL,
+        }:
+            raise ValueError("debit_spread plans need one buy and one sell leg")
         return self
 
     def mcp_arguments(self) -> dict:

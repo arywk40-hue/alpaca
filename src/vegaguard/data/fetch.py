@@ -7,7 +7,13 @@ from pathlib import Path
 
 from .alpaca import HistoricalMarketDataProvider
 from .cache import LocalMarketDataCache
-from .normalize import normalize_bars, normalize_option_contracts, normalize_option_quotes
+from .normalize import (
+    contracts_observed_in_historical_quotes,
+    normalize_bars,
+    normalize_option_contracts,
+    normalize_option_quotes,
+    normalize_option_snapshots,
+)
 
 
 async def fetch_history(
@@ -123,8 +129,10 @@ async def fetch_history(
 
     option_bars: list[dict] = []
     option_quotes: list[dict] = []
+    option_snapshots: list[dict] = []
     raw_option_bars: list[dict] = []
     raw_option_quotes: list[dict] = []
+    raw_option_snapshots: list[dict] = []
     if include_options:
         # Alpaca options endpoints accept up to 100 contract symbols per request.
         # These are historical responses, not synthetic data. Their use in replay is
@@ -145,12 +153,20 @@ async def fetch_history(
             bars_request_ids = _response_ids(provider)
             quotes_payload = await provider.option_quotes(**option_common)
             quotes_request_ids = _response_ids(provider)
+            snapshots_payload = await provider.option_snapshots(
+                symbols=option_common["symbols"], limit=1_000
+            )
+            snapshots_request_ids = _response_ids(provider)
             raw_option_bars.append({"request_ids": bars_request_ids, "response": bars_payload})
             raw_option_quotes.append(
                 {"request_ids": quotes_request_ids, "response": quotes_payload}
             )
+            raw_option_snapshots.append(
+                {"request_ids": snapshots_request_ids, "response": snapshots_payload}
+            )
             option_bars.extend(normalize_bars(bars_payload, timeframe="30Min"))
             option_quotes.extend(normalize_option_quotes(quotes_payload))
+            option_snapshots.extend(normalize_option_snapshots(snapshots_payload))
         cache.write_raw(
             "option_bars",
             raw_option_bars,
@@ -173,6 +189,17 @@ async def fetch_history(
             data_kind="option-quote",
             request_id=_bundle_request_ids(raw_option_quotes),
         )
+        cache.write_raw(
+            "option_snapshots",
+            raw_option_snapshots,
+            endpoint="/v1beta1/options/snapshots",
+            symbols=symbols,
+            start=start,
+            end=end,
+            feed="indicative_or_opra",
+            data_kind="option-snapshot",
+            request_id=_bundle_request_ids(raw_option_snapshots),
+        )
         cache.write_normalized(
             "option_bars",
             option_bars,
@@ -193,12 +220,40 @@ async def fetch_history(
             feed="indicative_or_opra",
             data_kind="option-quote",
         )
+        cache.write_normalized(
+            "option_snapshots",
+            option_snapshots,
+            endpoint="/v1beta1/options/snapshots",
+            symbols=symbols,
+            start=start,
+            end=end,
+            feed="indicative_or_opra",
+            data_kind="option-snapshot",
+        )
+        # A historical quote proves its OCC metadata existed at that timestamp.
+        # Preserve the future-observed contracts response too for auditability, but
+        # make these point-in-time records available to the replay engine.
+        derived_contracts = contracts_observed_in_historical_quotes(option_quotes)
+        contracts_by_symbol = {contract["symbol"]: contract for contract in contracts}
+        contracts_by_symbol.update({contract["symbol"]: contract for contract in derived_contracts})
+        contracts = sorted(contracts_by_symbol.values(), key=lambda contract: contract["symbol"])
+        cache.write_normalized(
+            "option_contracts",
+            contracts,
+            endpoint="/v2/options/contracts + OCC metadata observed in /v1beta1/options/quotes",
+            symbols=symbols,
+            start=start,
+            end=end,
+            feed="indicative_or_opra",
+            data_kind="option-chain",
+        )
     return {
         "daily_bars": len(daily),
         "intraday_bars": len(intraday),
         "contracts": len(contracts),
         "option_bars": len(option_bars),
         "option_quotes": len(option_quotes),
+        "option_snapshots": len(option_snapshots),
     }
 
 

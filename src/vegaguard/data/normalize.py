@@ -105,3 +105,39 @@ def normalize_option_snapshots(payload: dict[str, Any]) -> list[dict[str, Any]]:
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(records, key=lambda item: (item["symbol"], item["timestamp"]))
+
+
+def contracts_observed_in_historical_quotes(quotes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Derive immutable OCC metadata from the first real historical quote.
+
+    A contract's OCC symbol encodes its underlying, expiry, type, and strike. A
+    historical quote proves that this immutable metadata was observable at that
+    quote timestamp, avoiding a current contracts-search response leaking into
+    a historical decision. This does not manufacture Greeks or IV.
+    """
+    observed: dict[str, dict[str, Any]] = {}
+    for quote in quotes:
+        symbol = str(quote.get("symbol", ""))
+        if len(symbol) < 15 or not quote.get("timestamp"):
+            continue
+        try:
+            tail = symbol[-15:]
+            underlying = symbol[:-15]
+            expiry = datetime.strptime(tail[:6], "%y%m%d").replace(tzinfo=UTC).date().isoformat()
+            option_type = {"C": "call", "P": "put"}[tail[6]]
+            strike = int(tail[7:]) / 1000
+            timestamp = normalize_timestamp(str(quote["timestamp"]))
+        except (KeyError, ValueError):
+            continue
+        existing = observed.get(symbol)
+        if existing is None or timestamp < existing["observed_at"]:
+            observed[symbol] = {
+                "symbol": symbol,
+                "underlying": underlying,
+                "option_type": option_type,
+                "strike": strike,
+                "expiration": expiry,
+                "observed_at": timestamp,
+                "status": "observed_in_historical_quote",
+            }
+    return sorted(observed.values(), key=lambda item: item["symbol"])

@@ -5,7 +5,11 @@ import pytest
 
 from vegaguard.data.alpaca import AlpacaHistoricalDataProvider, HistoricalDataError
 from vegaguard.data.cache import LocalMarketDataCache
-from vegaguard.data.normalize import normalize_bars, normalize_option_quotes
+from vegaguard.data.normalize import (
+    contracts_observed_in_historical_quotes,
+    normalize_bars,
+    normalize_option_quotes,
+)
 
 
 @pytest.mark.asyncio
@@ -107,3 +111,23 @@ def test_cache_manifest_captures_research_provenance(tmp_path):
     assert '"request_id": "request-123"' in manifest
     assert '"data_kind": "stock-bars"' in manifest
     assert '"path": "raw/stock_daily.json"' in manifest
+
+
+def test_historical_quote_derives_only_point_in_time_occ_contract_metadata():
+    contracts = contracts_observed_in_historical_quotes(
+        [
+            {"symbol": "SPY260918C00650000", "timestamp": "2026-08-20T14:00:00Z"},
+            {"symbol": "SPY260918C00650000", "timestamp": "2026-08-19T14:00:00Z"},
+        ]
+    )
+    assert contracts == [
+        {
+            "symbol": "SPY260918C00650000",
+            "underlying": "SPY",
+            "option_type": "call",
+            "strike": 650.0,
+            "expiration": "2026-09-18",
+            "observed_at": "2026-08-19T14:00:00+00:00",
+            "status": "observed_in_historical_quote",
+        }
+    ]

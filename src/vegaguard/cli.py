@@ -7,7 +7,10 @@ from pathlib import Path
 from .config import get_settings
 from .data.alpaca import AlpacaHistoricalDataProvider
 from .data.fetch import fetch_history
+from .execution import PaperExecutionAgent
+from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
+from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
 from .strategy.replay import load_observations, run_replay, write_report
 
@@ -38,6 +41,12 @@ async def _fetch_history(args: argparse.Namespace) -> None:
     print(json.dumps(counts, indent=2))
 
 
+async def _read_only_cycle() -> None:
+    settings = get_settings()
+    executor = PaperExecutionAgent(settings, DecisionJournal(), AlpacaMCPClient(settings))
+    print(json.dumps(await AutonomousCycle(settings, executor).run_read_only(), indent=2))
+
+
 def _symbols(value: str) -> list[str]:
     symbols = [symbol.strip().upper() for symbol in value.split(",") if symbol.strip()]
     if not symbols:
@@ -60,6 +69,12 @@ def main() -> None:
     fetch_parser.add_argument("--end", required=True, help="Inclusive RFC-3339 date or timestamp")
     fetch_parser.add_argument("--data-dir", default="data")
     fetch_parser.add_argument("--feed", default="iex", choices=["iex", "sip"])
+
+    live_parser = subparsers.add_parser("live", help="Paper-account commands")
+    live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
+    live_subparsers.add_parser(
+        "read-only-cycle", help="Query paper account and market data; never invokes execution"
+    )
 
     strategy_parser = subparsers.add_parser(
         "strategy", help="Deterministic local research commands"
@@ -85,6 +100,11 @@ def main() -> None:
     if args.command == "data" and args.data_command == "fetch-history":
         try:
             asyncio.run(_fetch_history(args))
+        except RuntimeError as exc:
+            parser.error(str(exc))
+    if args.command == "live" and args.live_command == "read-only-cycle":
+        try:
+            asyncio.run(_read_only_cycle())
         except RuntimeError as exc:
             parser.error(str(exc))
     if args.command == "strategy" and args.strategy_command == "backtest":
