@@ -115,4 +115,3 @@ class JournalEntry(BaseModel):
     plan: TradePlan | None = None
     gate: GateResult | None = None
     payload: dict = Field(default_factory=dict)
-

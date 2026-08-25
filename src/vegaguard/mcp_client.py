@@ -35,7 +35,9 @@ class AlpacaMCPClient:
         async with self.session() as client:
             available = {tool.name for tool in (await client.list_tools()).tools}
             if tool_name not in available:
-                raise RuntimeError(f"MCP tool {tool_name!r} is not available. Check ALPACA_TOOLSETS.")
+                raise RuntimeError(
+                    f"MCP tool {tool_name!r} is not available. Check ALPACA_TOOLSETS."
+                )
             result = await client.call_tool(tool_name, arguments)
         payloads: list[Any] = []
         for item in result.content:

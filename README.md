@@ -44,6 +44,16 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
 
 6. Once paper credentials and the MCP schema are verified, set `ALLOW_ORDER_EXECUTION=true`. The risk gate still blocks non-paper, illiquid, near-expiry, over-sized, or duplicate trades.
 
+### Deterministic replay
+
+This uses only a sanitized fixture and validates the scoring and accounting path. It is **not** a historical-performance claim.
+
+```bash
+vegaguard replay \
+  --fixture tests/fixtures/strategy_replay_sanitized.json \
+  --output results/strategy_replay.json
+```
+
 ## Current scope
 
 The first slice implements the safety-critical domain model, deterministic risk gate, durable decision journal, OpenAI thesis-agent contract, and a real MCP stdio client that dynamically discovers and calls Alpaca v2 tools. The next slice wires live option-chain normalization and `trade_updates` into the API cycle.

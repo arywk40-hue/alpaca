@@ -32,7 +32,11 @@ def plan(*, dte: int = 14, bid: float = 2.0, ask: float = 2.1, qty: int = 1) -> 
     return TradePlan(
         underlying="SPY",
         strategy="single_leg",
-        legs=[OptionLeg(symbol=candidate.symbol, side=Side.BUY, position_intent=PositionIntent.BUY_TO_OPEN)],
+        legs=[
+            OptionLeg(
+                symbol=candidate.symbol, side=Side.BUY, position_intent=PositionIntent.BUY_TO_OPEN
+            )
+        ],
         qty=qty,
         limit_price=2.05,
         max_loss_usd=105,
@@ -55,4 +59,3 @@ def test_blocks_wide_spread_and_expiry_risk():
     assert not result.approved
     assert any("DTE" in reason for reason in result.reasons)
     assert any("spread" in reason for reason in result.reasons)
-

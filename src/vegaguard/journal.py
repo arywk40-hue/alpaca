@@ -18,4 +18,3 @@ class DecisionJournal:
             return []
         lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]
         return [json.loads(line) for line in reversed(lines)]
-

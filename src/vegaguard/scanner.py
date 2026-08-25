@@ -41,7 +41,10 @@ class OpportunityScanner:
         self.alpaca = alpaca
 
     async def scan(self, underlying: str) -> Opportunity | None:
-        bars, snapshots = await self.alpaca.daily_bars(underlying), await self.alpaca.option_snapshots(underlying)
+        bars, snapshots = (
+            await self.alpaca.daily_bars(underlying),
+            await self.alpaca.option_snapshots(underlying),
+        )
         closes = [float(bar["c"]) for bar in bars if "c" in bar]
         if len(closes) < 8:
             return None
@@ -78,7 +81,10 @@ class OpportunityScanner:
                 continue
             dte = (expiry - today).days
             quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
-            bid, ask = float(quote.get("bp", quote.get("bid_price", 0))), float(quote.get("ap", quote.get("ask_price", 0)))
+            bid, ask = (
+                float(quote.get("bp", quote.get("bid_price", 0))),
+                float(quote.get("ap", quote.get("ask_price", 0))),
+            )
             if bid <= 0 or ask <= bid:
                 continue
             greeks = snapshot.get("greeks") or {}
@@ -91,7 +97,9 @@ class OpportunityScanner:
                 dte=dte,
                 bid=bid,
                 ask=ask,
-                implied_volatility=snapshot.get("impliedVolatility", snapshot.get("implied_volatility")),
+                implied_volatility=snapshot.get(
+                    "impliedVolatility", snapshot.get("implied_volatility")
+                ),
                 delta=greeks.get("delta"),
                 underlying_price=underlying_price,
             )

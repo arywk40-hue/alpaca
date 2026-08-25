@@ -47,9 +47,8 @@ class AlpacaRESTClient:
             f"/v2/stocks/{symbol}/bars",
             {"timeframe": "1Day", "limit": limit, "feed": "iex"},
         )
-        return data.get("bars", {}) .get(symbol, [])
+        return data.get("bars", {}).get(symbol, [])
 
     async def option_snapshots(self, underlying: str) -> dict[str, dict]:
         data = await self._get(self.data_base_url, f"/v1beta1/options/snapshots/{underlying}")
         return data.get("snapshots", {})
-

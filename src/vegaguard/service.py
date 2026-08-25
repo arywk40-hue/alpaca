@@ -17,7 +17,11 @@ class AutonomousCycle:
         self.executor = executor
 
     async def run_once(self) -> dict:
-        account, clock, positions = await self.alpaca.account(), await self.alpaca.clock(), await self.alpaca.positions()
+        account, clock, positions = (
+            await self.alpaca.account(),
+            await self.alpaca.clock(),
+            await self.alpaca.positions(),
+        )
         for underlying in self.settings.universe:
             opportunity = await self.scanner.scan(underlying)
             if opportunity is None:
@@ -49,6 +53,10 @@ class AutonomousCycle:
                 buying_power=float(account.get("buying_power", 0)),
             )
             result = await self.executor.submit(plan, gate)
-            return {"underlying": underlying, "plan": plan.model_dump(mode="json"), "gate": gate.model_dump(), "result": result}
+            return {
+                "underlying": underlying,
+                "plan": plan.model_dump(mode="json"),
+                "gate": gate.model_dump(),
+                "result": result,
+            }
         return {"status": "no_trade", "reason": "no contract passed scanner and thesis criteria"}
-

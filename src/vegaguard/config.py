@@ -41,7 +41,11 @@ class Settings(BaseSettings):
 
     @property
     def universe(self) -> list[str]:
-        return [symbol.strip().upper() for symbol in self.underlying_universe.split(",") if symbol.strip()]
+        return [
+            symbol.strip().upper()
+            for symbol in self.underlying_universe.split(",")
+            if symbol.strip()
+        ]
 
 
 @lru_cache

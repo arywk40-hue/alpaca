@@ -8,7 +8,9 @@ class DeterministicRiskGate:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def assess(self, plan: TradePlan, *, market_open: bool, open_positions: int, buying_power: float) -> GateResult:
+    def assess(
+        self, plan: TradePlan, *, market_open: bool, open_positions: int, buying_power: float
+    ) -> GateResult:
         reasons: list[str] = []
         candidate = plan.candidate
         if not self.settings.alpaca_paper_trade:
@@ -33,5 +35,6 @@ class DeterministicRiskGate:
             reasons.append("insufficient buying power for defined maximum loss")
         if plan.strategy == "single_leg" and plan.legs[0].side.value != "buy":
             reasons.append("single-leg short options are outside VegaGuard scope")
-        return GateResult(approved=not reasons, reasons=reasons or ["all deterministic checks passed"])
-
+        return GateResult(
+            approved=not reasons, reasons=reasons or ["all deterministic checks passed"]
+        )

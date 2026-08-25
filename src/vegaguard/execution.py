@@ -20,6 +20,7 @@ class PaperExecutionAgent:
             raise RuntimeError("Execution is only permitted with ALPACA_PAPER_TRADE=true")
         self.journal.append(JournalEntry(event="order_submission_intent", plan=plan, gate=gate))
         receipt = await self.mcp.call("place_option_order", plan.mcp_arguments())
-        self.journal.append(JournalEntry(event="order_submission_receipt", plan=plan, gate=gate, payload=receipt))
+        self.journal.append(
+            JournalEntry(event="order_submission_receipt", plan=plan, gate=gate, payload=receipt)
+        )
         return {"status": "submitted", "receipt": receipt}
-
