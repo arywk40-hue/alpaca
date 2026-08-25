@@ -5,6 +5,7 @@ import pytest
 
 from vegaguard.data.alpaca import AlpacaHistoricalDataProvider, HistoricalDataError
 from vegaguard.data.cache import LocalMarketDataCache
+from vegaguard.data.fetch import fetch_history
 from vegaguard.data.normalize import (
     contracts_observed_in_historical_quotes,
     normalize_bars,
@@ -131,3 +132,78 @@ def test_historical_quote_derives_only_point_in_time_occ_contract_metadata():
             "status": "observed_in_historical_quote",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
+    class Provider:
+        def __init__(self):
+            self.last_request_ids = ["request-1"]
+            self.snapshot_calls = 0
+
+        async def stock_bars(self, **_params):
+            return {
+                "bars": [
+                    {
+                        "symbol": "SPY",
+                        "t": "2026-08-01T14:00:00Z",
+                        "o": 1,
+                        "h": 2,
+                        "l": 1,
+                        "c": 2,
+                        "v": 3,
+                    }
+                ]
+            }
+
+        async def option_contracts(self, **_params):
+            return {
+                "option_contracts": [
+                    {
+                        "symbol": "SPY260821C00002000",
+                        "underlying_symbol": "SPY",
+                        "type": "call",
+                        "strike_price": "2",
+                        "expiration_date": "2026-08-21",
+                    }
+                ]
+            }
+
+        async def option_bars(self, **_params):
+            return {"bars": []}
+
+        async def option_quotes(self, **_params):
+            return {
+                "quotes": [
+                    {
+                        "symbol": "SPY260821C00002000",
+                        "t": "2026-08-01T14:00:00Z",
+                        "bp": 1,
+                        "ap": 1.1,
+                    }
+                ]
+            }
+
+        async def option_snapshots(self, **_params):
+            self.snapshot_calls += 1
+            return {
+                "snapshots": [
+                    {
+                        "symbol": "SPY260821C00002000",
+                        "latestQuote": {"t": "2026-08-01T14:00:00Z", "bp": 1, "ap": 1.1},
+                        "greeks": {"delta": 0.45},
+                        "impliedVolatility": 0.2,
+                    }
+                ]
+            }
+
+    provider = Provider()
+    counts = await fetch_history(
+        provider, symbols=["SPY"], start="2026-08-01", end="2026-08-02", cache_root=tmp_path
+    )
+    snapshots = (tmp_path / "normalized" / "option_snapshots.json").read_text()
+    manifest = (tmp_path / "cache_manifest.json").read_text()
+    assert provider.snapshot_calls == 1
+    assert counts["option_snapshots"] == 1
+    assert '"delta": 0.45' in snapshots
+    assert '"data_kind": "option-snapshot"' in manifest
