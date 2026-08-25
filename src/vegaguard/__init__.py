@@ -1,0 +1,2 @@
+"""VegaGuard paper-options agent."""
+
