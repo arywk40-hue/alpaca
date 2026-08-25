@@ -54,6 +54,32 @@ vegaguard replay \
   --output results/strategy_replay.json
 ```
 
+### Historical research (read-only)
+
+The historical adapter uses Alpaca's stock-bars, option-bars, option-quotes, option-snapshots,
+and option-contracts endpoints. It has no order-submission code. Downloaded data is kept out of
+Git, along with a cache manifest that records request metadata and request IDs when supplied.
+
+```bash
+vegaguard data fetch-history \
+  --symbols SPY,QQQ,IWM \
+  --start 2025-01-01 \
+  --end 2025-03-31
+
+vegaguard strategy backtest \
+  --data-dir data/normalized \
+  --symbols SPY,QQQ,IWM \
+  --start 2025-01-01T00:00:00+00:00 \
+  --end 2025-03-31T23:59:59+00:00 \
+  --output results/historical_strategy_backtest.json
+```
+
+The replay rejects data observed after the decision timestamp, incomplete contract metadata,
+stale/missing quotes or Greeks, and missing IV history. It will label output
+`STOCK-SIGNAL-ONLY ANALYSIS` and **inconclusive** rather than claim option P&L if the normalized
+inputs cannot support a real point-in-time option backtest. Alpaca's historical option data starts
+in February 2024; free indicative data is delayed and modified relative to OPRA.
+
 ## Current scope
 
 The first slice implements the safety-critical domain model, deterministic risk gate, durable decision journal, OpenAI thesis-agent contract, and a real MCP stdio client that dynamically discovers and calls Alpaca v2 tools. The next slice wires live option-chain normalization and `trade_updates` into the API cycle.

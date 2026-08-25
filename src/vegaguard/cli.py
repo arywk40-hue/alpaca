@@ -1,10 +1,14 @@
 import argparse
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 from .config import get_settings
+from .data.alpaca import AlpacaHistoricalDataProvider
+from .data.fetch import fetch_history
 from .mcp_client import AlpacaMCPClient
+from .strategy.backtest import HistoricalBacktester, write_historical_report
 from .strategy.replay import load_observations, run_replay, write_report
 
 
@@ -13,10 +17,64 @@ async def _inspect_mcp() -> None:
     print(json.dumps(tools, indent=2))
 
 
+async def _fetch_history(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    if not settings.alpaca_api_key or not settings.alpaca_secret_key:
+        raise RuntimeError(
+            "Missing ALPACA_API_KEY or ALPACA_SECRET_KEY in .env; no request was made"
+        )
+    symbols = _symbols(args.symbols)
+    async with AlpacaHistoricalDataProvider(
+        settings.alpaca_api_key.get_secret_value(), settings.alpaca_secret_key.get_secret_value()
+    ) as provider:
+        counts = await fetch_history(
+            provider,
+            symbols=symbols,
+            start=args.start,
+            end=args.end,
+            cache_root=args.data_dir,
+            stock_feed=args.feed,
+        )
+    print(json.dumps(counts, indent=2))
+
+
+def _symbols(value: str) -> list[str]:
+    symbols = [symbol.strip().upper() for symbol in value.split(",") if symbol.strip()]
+    if not symbols:
+        raise ValueError("At least one symbol is required")
+    return symbols
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VegaGuard paper-options agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("inspect-mcp")
+
+    data_parser = subparsers.add_parser("data", help="Read-only historical data commands")
+    data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
+    fetch_parser = data_subparsers.add_parser("fetch-history")
+    fetch_parser.add_argument(
+        "--symbols", required=True, help="Comma-separated symbols, e.g. SPY,QQQ,IWM"
+    )
+    fetch_parser.add_argument("--start", required=True, help="Inclusive RFC-3339 date or timestamp")
+    fetch_parser.add_argument("--end", required=True, help="Inclusive RFC-3339 date or timestamp")
+    fetch_parser.add_argument("--data-dir", default="data")
+    fetch_parser.add_argument("--feed", default="iex", choices=["iex", "sip"])
+
+    strategy_parser = subparsers.add_parser(
+        "strategy", help="Deterministic local research commands"
+    )
+    strategy_subparsers = strategy_parser.add_subparsers(dest="strategy_command", required=True)
+    backtest_parser = strategy_subparsers.add_parser("backtest")
+    backtest_parser.add_argument("--data-dir", default="data/normalized")
+    backtest_parser.add_argument("--symbols", required=True)
+    backtest_parser.add_argument("--start", required=True)
+    backtest_parser.add_argument("--end", required=True)
+    backtest_parser.add_argument("--output", default="results/historical_strategy_backtest.json")
+    backtest_parser.add_argument("--report", default="reports/historical_strategy_backtest.md")
+    backtest_parser.add_argument("--initial-equity", type=float, default=100_000.0)
+    backtest_parser.add_argument("--max-open-positions", type=int, default=3)
+    backtest_parser.add_argument("--max-contracts-per-trade", type=int, default=1)
     replay_parser = subparsers.add_parser("replay")
     replay_parser.add_argument("--fixture", required=True, help="Sanitized replay input JSON")
     replay_parser.add_argument("--output", default="results/strategy_replay.json")
@@ -24,6 +82,34 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "inspect-mcp":
         asyncio.run(_inspect_mcp())
+    if args.command == "data" and args.data_command == "fetch-history":
+        try:
+            asyncio.run(_fetch_history(args))
+        except RuntimeError as exc:
+            parser.error(str(exc))
+    if args.command == "strategy" and args.strategy_command == "backtest":
+        start = datetime.fromisoformat(args.start)
+        end = datetime.fromisoformat(args.end)
+        result = HistoricalBacktester(
+            args.data_dir,
+            symbols=_symbols(args.symbols),
+            start=start,
+            end=end,
+            initial_equity=args.initial_equity,
+            max_open_positions=args.max_open_positions,
+            max_contracts_per_trade=args.max_contracts_per_trade,
+        ).run()
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result.as_dict(), indent=2) + "\n", encoding="utf-8")
+        write_historical_report(
+            result,
+            path=args.report,
+            symbols=_symbols(args.symbols),
+            start=args.start,
+            end=args.end,
+        )
+        print(json.dumps(result.as_dict(), indent=2))
     if args.command == "replay":
         result = run_replay(load_observations(args.fixture))
         write_report(

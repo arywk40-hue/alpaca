@@ -5,5 +5,12 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 *.py[cod]
+# Downloaded market data and generated research outputs are local artifacts.  Fixtures
+# under tests/fixtures remain versioned and are the only synthetic inputs used in CI.
+data/raw/
+data/normalized/
+data/cache_manifest.json
+reports/historical_strategy_backtest.md
+results/historical_strategy_backtest.json
 data/*.jsonl
 results/*.json
