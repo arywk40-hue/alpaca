@@ -158,6 +158,13 @@ class AutonomousCycle:
                 "scan": self._serialize_scan(selected),
                 "reviews": [review.__dict__ for review in reviews],
             }
+        if self._thesis_agent is None and not self.settings.openai_api_key:
+            return {
+                "status": "no_trade",
+                "reason": "OPENAI_API_KEY is missing; no AI thesis can approve this opportunity",
+                "scan": self._serialize_scan(selected),
+                "reviews": [review.__dict__ for review in reviews],
+            }
         thesis = await self._thesis().evaluate(selected.opportunity)
         if thesis.action == "skip":
             return {

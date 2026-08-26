@@ -127,3 +127,22 @@ async def test_closed_market_returns_before_scanning_or_an_llm_call(monkeypatch)
         "reason": "market_closed",
         "paper_only": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_qualified_signal_abstains_cleanly_when_no_openai_thesis_key_is_configured(
+    monkeypatch,
+):
+    cycle = AutonomousCycle(Settings(underlying_universe="SPY"), NoopExecutor())
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
+
+    async def scan(_underlying):
+        return _scan()
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    result = await cycle.run_once()
+    assert result["status"] == "no_trade"
+    assert "OPENAI_API_KEY is missing" in result["reason"]
