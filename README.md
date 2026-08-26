@@ -110,8 +110,8 @@ Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 
-`OPENAI_API_KEY` is also required once a deterministic opportunity reaches the thesis stage. If it
-is absent, VegaGuard returns a journalable no-trade decision instead of attempting an order.
+`OPENAI_API_KEY` is optional. When it is absent, VegaGuard uses a bounded deterministic thesis over
+the same validated opportunity; it cannot alter legs, size, or any deterministic risk rule.
 
 When Alpaca omits IV/Greeks, VegaGuard can deterministically derive them from a fresh observed
 bid/ask, the OCC contract metadata, and the configured risk-free rate using Black–Scholes inversion.

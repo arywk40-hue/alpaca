@@ -281,8 +281,10 @@ class OpportunityScanner:
             dte = (expiry - now.date()).days
             if bid <= 0 or ask <= bid:
                 continue
+            iv_source = "official"
             if iv is None:
                 iv = self._quote_derived_iv(symbol, snapshot, underlying_price, now)
+                iv_source = "quote_derived"
             if iv is None:
                 continue
             if delta is None:
@@ -306,6 +308,7 @@ class OpportunityScanner:
                 bid=bid,
                 ask=ask,
                 implied_volatility=float(iv),
+                iv_source=iv_source,
                 delta=float(delta),
                 underlying_price=underlying_price,
             )

@@ -15,7 +15,7 @@ from .monitoring import OrderLifecycle, PositionGuardian
 from .risk import DeterministicRiskGate
 from .scanner import OpportunityScanner, ScanResult
 from .strategy.spread_builder import position_size
-from .thesis import OpenAIThesisAgent
+from .thesis import DeterministicThesisAgent, OpenAIThesisAgent, ThesisAgent
 
 
 class AutonomousCycle:
@@ -29,7 +29,7 @@ class AutonomousCycle:
         )
         self.risk_gate = DeterministicRiskGate(settings)
         self.executor = executor
-        self._thesis_agent: OpenAIThesisAgent | None = None
+        self._thesis_agent: ThesisAgent | None = None
         self.structure_agent = StructureVolatilityAgent()
         self.adversarial_risk_agent = AdversarialRiskAgent()
         self.allocator = RiskBudgetAllocator()
@@ -158,13 +158,6 @@ class AutonomousCycle:
                 "scan": self._serialize_scan(selected),
                 "reviews": [review.__dict__ for review in reviews],
             }
-        if self._thesis_agent is None and not self.settings.openai_api_key:
-            return {
-                "status": "no_trade",
-                "reason": "OPENAI_API_KEY is missing; no AI thesis can approve this opportunity",
-                "scan": self._serialize_scan(selected),
-                "reviews": [review.__dict__ for review in reviews],
-            }
         thesis = await self._thesis().evaluate(selected.opportunity)
         if thesis.action == "skip":
             return {
@@ -204,9 +197,13 @@ class AutonomousCycle:
         )
         return account, clock, positions
 
-    def _thesis(self) -> OpenAIThesisAgent:
+    def _thesis(self) -> ThesisAgent:
         if self._thesis_agent is None:
-            self._thesis_agent = OpenAIThesisAgent(self.settings)
+            self._thesis_agent = (
+                OpenAIThesisAgent(self.settings)
+                if self.settings.openai_api_key
+                else DeterministicThesisAgent()
+            )
         return self._thesis_agent
 
     def _plan_from_spread(
@@ -290,5 +287,6 @@ class AutonomousCycle:
                 "debit": scan.spread.debit,
                 "width": scan.spread.width,
                 "max_loss_per_contract": scan.spread.max_loss_per_contract,
+                "iv_source": scan.spread.long_leg.iv_source,
             }
         return payload

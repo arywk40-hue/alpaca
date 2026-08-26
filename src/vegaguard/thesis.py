@@ -1,9 +1,47 @@
 import json
+from collections.abc import Awaitable
+from typing import Protocol
 
 from openai import AsyncOpenAI
 
 from .config import Settings
 from .models import Opportunity, Thesis
+
+
+class ThesisAgent(Protocol):
+    def evaluate(self, opportunity: Opportunity) -> Awaitable[Thesis]: ...
+
+
+class DeterministicThesisAgent:
+    """Local bounded thesis that works when an OpenAI key is not configured."""
+
+    async def evaluate(self, opportunity: Opportunity) -> Thesis:
+        candidate = opportunity.candidate
+        tradeable = (
+            candidate.implied_volatility is not None
+            and candidate.delta is not None
+            and candidate.spread_pct <= 0.08
+            and abs(opportunity.return_5d_pct) > 0
+        )
+        if not tradeable:
+            return Thesis(
+                action="skip",
+                confidence=0.0,
+                rationale="Validated local evidence is incomplete or liquidity is outside the bounded thesis policy.",
+                invalidation="No trade is permitted until the deterministic scanner produces complete liquid evidence.",
+                candidate_symbol=candidate.symbol,
+            )
+        confidence = min(0.9, round(0.55 + min(abs(opportunity.return_5d_pct) / 20, 0.25), 2))
+        return Thesis(
+            action="trade",
+            confidence=confidence,
+            rationale=(
+                "Local bounded thesis accepts the scanner's validated directional opportunity; "
+                f"five-day return is {opportunity.return_5d_pct:.2f}% and the option quote is liquid."
+            ),
+            invalidation="Exit on deterministic signal reversal, stop-loss, time-stop, expiry rule, or liquidity deterioration.",
+            candidate_symbol=candidate.symbol,
+        )
 
 
 class OpenAIThesisAgent:

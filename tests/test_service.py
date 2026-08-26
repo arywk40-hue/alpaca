@@ -89,22 +89,11 @@ async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_pa
     async def account_state():
         return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
 
-    class TradeThesis:
-        async def evaluate(self, opportunity):
-            return Thesis(
-                action="trade",
-                confidence=0.8,
-                rationale="Validated evidence supports this bounded paper debit-spread dry run.",
-                invalidation="Exit on the deterministic price, time, or liquidity triggers.",
-                candidate_symbol=opportunity.candidate.symbol,
-            )
-
     async def scan(_underlying):
         return _scan()
 
     monkeypatch.setattr(cycle, "_account_state", account_state)
     monkeypatch.setattr(cycle.scanner, "scan", scan)
-    cycle._thesis_agent = TradeThesis()
     result = await cycle.run_once()
     assert result["result"]["status"] == "dry_run"
     assert result["plan"]["strategy"] == "debit_spread"
@@ -130,19 +119,10 @@ async def test_closed_market_returns_before_scanning_or_an_llm_call(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_qualified_signal_abstains_cleanly_when_no_openai_thesis_key_is_configured(
-    monkeypatch,
-):
-    cycle = AutonomousCycle(Settings(underlying_universe="SPY"), NoopExecutor())
-
-    async def account_state():
-        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
-
-    async def scan(_underlying):
-        return _scan()
-
-    monkeypatch.setattr(cycle, "_account_state", account_state)
-    monkeypatch.setattr(cycle.scanner, "scan", scan)
-    result = await cycle.run_once()
-    assert result["status"] == "no_trade"
-    assert "OPENAI_API_KEY is missing" in result["reason"]
+async def test_local_thesis_agent_runs_without_an_openai_key():
+    cycle = AutonomousCycle(Settings(), NoopExecutor())
+    scan = _scan()
+    assert scan.opportunity is not None
+    thesis = await cycle._thesis().evaluate(scan.opportunity)
+    assert thesis.action == "trade"
+    assert thesis.candidate_symbol == scan.opportunity.candidate.symbol

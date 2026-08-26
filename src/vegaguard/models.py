@@ -34,6 +34,7 @@ class OptionCandidate(BaseModel):
     bid: float = Field(ge=0)
     ask: float = Field(gt=0)
     implied_volatility: float | None = Field(default=None, ge=0)
+    iv_source: str = Field(default="official", pattern="^(official|quote_derived)$")
     delta: float | None = None
     underlying_price: float = Field(gt=0)
 
