@@ -112,3 +112,80 @@ def score_signal(inputs: SignalInputs, threshold: int = 70) -> SignalScore:
         agreeing_components=agreeing,
         reasons=tuple(reasons),
     )
+
+
+def score_signal_conflict_tolerant(inputs: SignalInputs, threshold: int = 70) -> SignalScore:
+    """Research-only alternative for evaluating daily/intraday disagreement.
+
+    It is deliberately not wired into the live scanner.  When the two trend
+    horizons conflict, the completed daily trend supplies the provisional
+    direction and receives a five-point conflict penalty.  It still needs the
+    daily trend plus all three independent confirmations (volume, volatility,
+    and market alignment) to reach the unchanged 70-point threshold.
+    """
+    daily = (
+        25
+        if inputs.return_5d_pct > 0 and inputs.price > inputs.ema_20
+        else -25
+        if inputs.return_5d_pct < 0 and inputs.price < inputs.ema_20
+        else 0
+    )
+    intraday = (
+        25
+        if inputs.ema_fast > inputs.ema_slow and inputs.price > inputs.vwap
+        else -25
+        if inputs.ema_fast < inputs.ema_slow and inputs.price < inputs.vwap
+        else 0
+    )
+    if not daily or not intraday or _direction(daily) == _direction(intraday):
+        return score_signal(inputs, threshold=threshold)
+
+    primary_direction = _direction(daily)
+    reasons = [
+        "daily and intraday regimes conflict; daily trend is provisional with a 5-point penalty"
+    ]
+    volume = 20 * primary_direction if inputs.volume_ratio >= 1.10 else 0
+    if not volume:
+        reasons.append("volume confirmation is absent")
+    volatility_is_usable = (
+        inputs.realized_volatility >= inputs.prior_realized_volatility
+        and inputs.implied_volatility <= inputs.prior_implied_volatility * 1.15
+    )
+    volatility = 15 * primary_direction if volatility_is_usable else 0
+    if not volatility:
+        reasons.append("volatility state is not favourable")
+    market_direction = _direction(inputs.market_return_1d_pct)
+    market = (
+        15 * primary_direction
+        if market_direction == primary_direction
+        else -15 * primary_direction
+        if market_direction == -primary_direction
+        else 0
+    )
+    if market < 0:
+        reasons.append("market direction conflicts with the candidate")
+
+    conflict_penalty = 5 * primary_direction
+    total = max(-100, min(100, daily + volume + volatility + market - conflict_penalty))
+    agreeing = sum(
+        _direction(component) == primary_direction and component != 0
+        for component in (daily, volume, volatility, market)
+    )
+    if total >= threshold and agreeing >= 4:
+        regime = Regime.BULLISH
+    elif total <= -threshold and agreeing >= 4:
+        regime = Regime.BEARISH
+    else:
+        regime = Regime.NEUTRAL
+        reasons.append("conflict score or independent-confirmation threshold was not met")
+    return SignalScore(
+        score=total,
+        regime=regime,
+        daily_regime=daily,
+        intraday_trend=intraday,
+        volume_confirmation=volume,
+        volatility_state=volatility,
+        market_alignment=market,
+        agreeing_components=agreeing,
+        reasons=tuple(reasons),
+    )

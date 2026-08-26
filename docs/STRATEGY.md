@@ -9,3 +9,16 @@ Quotes must be fresh, non-crossed, and inside the configured bid/ask-spread limi
 Entry is a positive debit limit. Maximum loss is the debit times 100 times contracts; maximum profit is spread width less debit, times 100 times contracts. The guardian uses conservative executable value (long bid less short ask), exits at +50% profit or -35% loss, and also exits on signal reversal, three-day time stop, or two days to expiry. All exits reverse both legs atomically.
 
 Paper results are not evidence of future real-market performance.
+
+## Research-only conflict experiment
+
+The production scanner uses the baseline scorer. `score_signal_conflict_tolerant` is an offline experiment only; it is never imported by the scanner, scheduler, or execution path. When daily and intraday trends conflict, it uses the completed daily trend provisionally, applies a five-point penalty, retains the 70-point threshold, and requires daily direction plus volume, volatility, and market alignment before it can classify a trade.
+
+Run the A/B report only on point-in-time replay data:
+
+```bash
+vegaguard strategy compare-scorers \
+  --fixture tests/fixtures/strategy_replay_sanitized.json
+```
+
+The report includes trade count, net P&L after costs, win rate, profit factor, maximum drawdown, rejection reasons, and regime distribution. It explicitly marks missing normalized historical option data as no out-of-sample assessment. Do not promote the experimental scorer to live use without a separate, statistically meaningful point-in-time historical result and an execution-risk review.

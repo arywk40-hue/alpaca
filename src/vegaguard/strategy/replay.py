@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,12 +27,16 @@ class ReplayResult:
     summary: PerformanceSummary
 
 
-def run_replay(observations: list[ReplayObservation]) -> ReplayResult:
+def run_replay(
+    observations: list[ReplayObservation],
+    *,
+    scorer: Callable[[SignalInputs], SignalScore] = score_signal,
+) -> ReplayResult:
     ordered = sorted(observations, key=lambda item: item.timestamp)
     decisions: list[SignalScore] = []
     trades: list[ClosedTrade] = []
     for item in ordered:
-        decision = score_signal(item.inputs)
+        decision = scorer(item.inputs)
         decisions.append(decision)
         if decision.regime.value not in {"bullish", "bearish"}:
             continue

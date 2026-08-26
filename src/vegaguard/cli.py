@@ -16,6 +16,7 @@ from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
 from .strategy.replay import load_observations, run_replay, write_report
+from .strategy.research import compare_replay_scorers
 
 
 async def _inspect_mcp() -> None:
@@ -158,6 +159,11 @@ def main() -> None:
     backtest_parser.add_argument("--initial-equity", type=float, default=100_000.0)
     backtest_parser.add_argument("--max-open-positions", type=int, default=3)
     backtest_parser.add_argument("--max-contracts-per-trade", type=int, default=1)
+    compare_parser = strategy_subparsers.add_parser(
+        "compare-scorers", help="Offline A/B comparison; never calls live data or execution"
+    )
+    compare_parser.add_argument("--fixture", required=True, help="Sanitized replay input JSON")
+    compare_parser.add_argument("--output", default="results/conflict_scorer_ab.json")
     replay_parser = subparsers.add_parser("replay")
     replay_parser.add_argument("--fixture", required=True, help="Sanitized replay input JSON")
     replay_parser.add_argument("--output", default="results/strategy_replay.json")
@@ -215,6 +221,12 @@ def main() -> None:
             end=args.end,
         )
         print(json.dumps(result.as_dict(), indent=2))
+    if args.command == "strategy" and args.strategy_command == "compare-scorers":
+        report = compare_replay_scorers(load_observations(args.fixture))
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2))
     if args.command == "replay":
         result = run_replay(load_observations(args.fixture))
         write_report(

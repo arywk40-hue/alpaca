@@ -1,4 +1,9 @@
-from vegaguard.strategy.scorer import Regime, SignalInputs, score_signal
+from vegaguard.strategy.scorer import (
+    Regime,
+    SignalInputs,
+    score_signal,
+    score_signal_conflict_tolerant,
+)
 
 
 def inputs(**overrides) -> SignalInputs:
@@ -53,3 +58,28 @@ def test_rich_iv_rejects_otherwise_incomplete_signal():
     score = score_signal(inputs(volume_ratio=1.0, implied_volatility=0.40))
     assert score.regime == Regime.NEUTRAL
     assert score.score == 65
+
+
+def test_research_scorer_requires_all_independent_confirmations_on_a_trend_conflict():
+    conflicted = inputs(ema_fast=95, ema_slow=100, vwap=115)
+    baseline = score_signal(conflicted)
+    experimental = score_signal_conflict_tolerant(conflicted)
+    assert baseline.regime == Regime.NEUTRAL
+    assert baseline.score == 0
+    assert experimental.score == 70
+    assert experimental.regime == Regime.BULLISH
+    assert experimental.daily_regime == 25
+    assert experimental.intraday_trend == -25
+    assert experimental.agreeing_components == 4
+    assert "5-point penalty" in experimental.reasons[0]
+
+
+def test_research_scorer_keeps_an_underconfirmed_conflict_neutral():
+    experimental = score_signal_conflict_tolerant(
+        inputs(ema_fast=95, ema_slow=100, vwap=115, volume_ratio=1.0, implied_volatility=0.4)
+    )
+    assert experimental.score == 35
+    assert experimental.regime == Regime.NEUTRAL
+    assert (
+        "conflict score or independent-confirmation threshold was not met" in experimental.reasons
+    )

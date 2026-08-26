@@ -59,6 +59,17 @@ vegaguard replay \
   --output results/strategy_replay.json
 ```
 
+### Offline scorer A/B research
+
+The production scanner remains on the baseline scorer. A conflict-tolerant alternative is available only for offline analysis; it cannot access Alpaca or execution code:
+
+```bash
+vegaguard strategy compare-scorers \
+  --fixture tests/fixtures/strategy_replay_sanitized.json
+```
+
+Do not promote it without a separate, point-in-time out-of-sample historical option-data result that improves performance without unacceptable drawdown or execution-risk regression.
+
 ### Historical research (read-only)
 
 The historical adapter uses Alpaca's stock-bars, option-bars, option-quotes, option-snapshots,
