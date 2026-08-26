@@ -136,7 +136,11 @@ class OpportunityScanner:
             reasons.append("insufficient completed 30-minute bars")
         if len(market_closes) < 2:
             reasons.append("insufficient SPY market-alignment bars")
-        iv_values = self._iv_values(snapshots, underlying_price=intraday_closes[-1], now=now)
+        iv_values = self._iv_values(
+            snapshots,
+            underlying_price=intraday_closes[-1] if intraday_closes else None,
+            now=now,
+        )
         iv = self._current_iv(underlying, snapshots, now, values=iv_values) if iv_values else None
         if not iv_values:
             reasons.append(

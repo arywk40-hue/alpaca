@@ -88,3 +88,12 @@ def test_live_scanner_derives_iv_and_delta_from_fresh_observed_option_quotes():
     assert len(candidates) == 1
     assert candidates[0].implied_volatility is not None
     assert candidates[0].delta is not None
+
+
+def test_live_scanner_treats_empty_provider_responses_as_a_no_trade_not_an_error():
+    inputs, reasons = OpportunityScanner(Settings(), alpaca=object())._signal_inputs(
+        "SPY", [], [], [], {}, datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
+    )
+    assert inputs is None
+    assert "insufficient completed daily bars" in reasons
+    assert "insufficient completed 30-minute bars" in reasons
