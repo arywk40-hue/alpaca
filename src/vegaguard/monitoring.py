@@ -22,6 +22,14 @@ class ExitDecision:
     spread_return_pct: float
 
 
+@dataclass(frozen=True)
+class LifecycleState:
+    client_order_id: str
+    status: str
+    filled_qty: float
+    updated_at: datetime
+
+
 class PositionGuardian:
     """Evaluates exits only; execution remains separately gated and disabled by default."""
 
@@ -51,6 +59,48 @@ class PositionGuardian:
         return ExitDecision("hold", "no_exit_trigger", spread_return)
 
 
+class OrderLifecycle:
+    """Idempotently reduces stream events and REST order snapshots into journaled state."""
+
+    terminal_statuses = frozenset({"filled", "canceled", "rejected", "expired"})
+
+    def __init__(self, journal: DecisionJournal):
+        self.journal = journal
+        self._states: dict[str, LifecycleState] = {}
+
+    def apply(self, event: dict[str, Any], *, source: str) -> LifecycleState | None:
+        order = event.get("order", event)
+        client_order_id = str(order.get("client_order_id") or "")
+        status = str(event.get("event") or order.get("status") or "unknown")
+        if not client_order_id:
+            return None
+        filled_qty = float(order.get("filled_qty") or 0)
+        previous = self._states.get(client_order_id)
+        if previous and previous.status == status and previous.filled_qty == filled_qty:
+            return previous
+        state = LifecycleState(client_order_id, status, filled_qty, datetime.now(UTC))
+        self._states[client_order_id] = state
+        self.journal.append(
+            JournalEntry(
+                event="order_lifecycle_transition",
+                payload={
+                    "source": source,
+                    "client_order_id": client_order_id,
+                    "previous_status": previous.status if previous else None,
+                    "status": status,
+                    "filled_qty": filled_qty,
+                },
+            )
+        )
+        return state
+
+    def reconcile(self, orders: list[dict[str, Any]]) -> list[LifecycleState]:
+        states = [
+            state for order in orders if (state := self.apply(order, source="rest_reconcile"))
+        ]
+        return states
+
+
 class PaperTradeUpdateMonitor:
     """Consume Alpaca paper ``trade_updates`` and write only an audit trail.
 
@@ -60,9 +110,12 @@ class PaperTradeUpdateMonitor:
 
     stream_url = "wss://paper-api.alpaca.markets/stream"
 
-    def __init__(self, settings: Settings, journal: DecisionJournal):
+    def __init__(
+        self, settings: Settings, journal: DecisionJournal, lifecycle: OrderLifecycle | None = None
+    ):
         self.settings = settings
         self.journal = journal
+        self.lifecycle = lifecycle or OrderLifecycle(journal)
 
     async def events(self) -> AsyncIterator[dict[str, Any]]:
         if not self.settings.alpaca_paper_trade:
@@ -88,4 +141,5 @@ class PaperTradeUpdateMonitor:
                     continue
                 event = payload.get("data", {})
                 self.journal.append(JournalEntry(event="trade_update", payload=event))
+                self.lifecycle.apply(event, source="trade_updates")
                 yield event

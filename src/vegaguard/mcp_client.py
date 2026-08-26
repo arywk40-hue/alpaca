@@ -12,6 +12,20 @@ from .config import Settings
 class AlpacaMCPClient:
     """Thin client for the official, locally launched Alpaca MCP v2 server."""
 
+    approved_tools = frozenset(
+        {
+            "get_account_info",
+            "get_clock",
+            "get_all_positions",
+            "get_option_contracts",
+            "get_option_chain",
+            "get_option_snapshot",
+            "get_orders",
+            "get_order_by_client_id",
+            "place_option_order",
+        }
+    )
+
     def __init__(self, settings: Settings):
         self.settings = settings
 
@@ -32,6 +46,10 @@ class AlpacaMCPClient:
             return [tool.model_dump(mode="json") for tool in tools.tools]
 
     async def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if tool_name not in self.approved_tools:
+            raise RuntimeError(
+                f"MCP tool {tool_name!r} is outside VegaGuard's approved tool budget"
+            )
         async with self.session() as client:
             available = {tool.name for tool in (await client.list_tools()).tools}
             if tool_name not in available:

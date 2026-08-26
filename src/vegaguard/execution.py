@@ -11,11 +11,20 @@ class PaperExecutionAgent:
         self.mcp = mcp
 
     async def submit(self, plan: TradePlan, gate: GateResult) -> dict:
+        if self.journal.has_client_order_id(plan.client_order_id):
+            return {"status": "blocked", "reasons": ["duplicate client_order_id"]}
         self.journal.append(JournalEntry(event="gate_evaluated", plan=plan, gate=gate))
         if not gate.approved:
             return {"status": "blocked", "reasons": gate.reasons}
         if not self.settings.allow_order_execution:
             return {"status": "observe_only", "reason": "ALLOW_ORDER_EXECUTION is false"}
+        if self.settings.dry_run:
+            self.journal.append(JournalEntry(event="dry_run_order", plan=plan, gate=gate))
+            return {
+                "status": "dry_run",
+                "reason": "DRY_RUN is true",
+                "mcp_arguments": plan.mcp_arguments(),
+            }
         if not self.settings.alpaca_paper_trade:
             raise RuntimeError("Execution is only permitted with ALPACA_PAPER_TRADE=true")
         self.journal.append(JournalEntry(event="order_submission_intent", plan=plan, gate=gate))

@@ -42,6 +42,10 @@ class AlpacaRESTClient:
         response.raise_for_status()
         return response.json()
 
+    async def orders(self) -> list[dict]:
+        data = await self._get(self.trading_base_url, "/v2/orders", {"status": "all", "limit": 100})
+        return data if isinstance(data, list) else []
+
     async def daily_bars(self, symbol: str, limit: int = 22) -> list[dict]:
         data = await self._get(
             self.data_base_url,

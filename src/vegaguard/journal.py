@@ -18,3 +18,16 @@ class DecisionJournal:
             return []
         lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]
         return [json.loads(line) for line in reversed(lines)]
+
+    def has_client_order_id(self, client_order_id: str) -> bool:
+        """Detect an idempotency key already journaled before an MCP submission."""
+        if not self.path.exists():
+            return False
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("plan", {}).get("client_order_id") == client_order_id:
+                return True
+        return False

@@ -4,6 +4,7 @@ from .config import get_settings
 from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
+from .monitoring import OrderLifecycle
 from .service import AutonomousCycle
 
 app = FastAPI(title="VegaGuard", version="0.1.0")
@@ -38,3 +39,19 @@ async def run_cycle() -> dict:
     journal = DecisionJournal()
     executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
     return await AutonomousCycle(settings, executor).run_once()
+
+
+@app.post("/cycle/read-only")
+async def run_read_only_cycle() -> dict:
+    settings = get_settings()
+    journal = DecisionJournal()
+    executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
+    return await AutonomousCycle(settings, executor).run_read_only()
+
+
+@app.post("/lifecycle/reconcile")
+async def reconcile_lifecycle() -> dict:
+    settings = get_settings()
+    journal = DecisionJournal()
+    executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
+    return await AutonomousCycle(settings, executor).reconcile_orders(OrderLifecycle(journal))

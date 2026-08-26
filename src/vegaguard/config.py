@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5-mini"
     allow_order_execution: bool = False
+    dry_run: bool = True
     max_open_positions: int = Field(default=3, ge=1)
     max_contracts_per_trade: int = Field(default=1, ge=1)
     risk_fraction_per_trade: float = Field(default=0.005, gt=0, le=0.02)

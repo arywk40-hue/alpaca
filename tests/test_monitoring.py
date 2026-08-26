@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from vegaguard.monitoring import PositionGuardian
+from vegaguard.journal import DecisionJournal
+from vegaguard.monitoring import OrderLifecycle, PositionGuardian
 
 
 def test_guardian_applies_profit_stop_and_reversal_exits_without_execution():
@@ -46,3 +47,20 @@ def test_guardian_applies_time_stop():
     )
     assert decision.action == "exit"
     assert decision.reason == "time_stop"
+
+
+def test_lifecycle_handles_partial_fill_and_rest_reconnect_idempotently(tmp_path):
+    lifecycle = OrderLifecycle(DecisionJournal(tmp_path / "journal.jsonl"))
+    partial = lifecycle.apply(
+        {"event": "partial_fill", "order": {"client_order_id": "vg-1", "filled_qty": "1"}},
+        source="trade_updates",
+    )
+    assert partial is not None and partial.status == "partial_fill"
+    reconciled = lifecycle.reconcile(
+        [{"client_order_id": "vg-1", "status": "filled", "filled_qty": "2"}]
+    )
+    assert reconciled[0].status == "filled"
+    repeated = lifecycle.reconcile(
+        [{"client_order_id": "vg-1", "status": "filled", "filled_qty": "2"}]
+    )
+    assert repeated[0] == reconciled[0]

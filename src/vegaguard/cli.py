@@ -10,6 +10,7 @@ from .data.fetch import fetch_history
 from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
+from .monitoring import PaperTradeUpdateMonitor
 from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
 from .strategy.replay import load_observations, run_replay, write_report
@@ -47,6 +48,13 @@ async def _read_only_cycle() -> None:
     print(json.dumps(await AutonomousCycle(settings, executor).run_read_only(), indent=2))
 
 
+async def _monitor_trade_updates() -> None:
+    settings = get_settings()
+    monitor = PaperTradeUpdateMonitor(settings, DecisionJournal())
+    async for event in monitor.events():
+        print(json.dumps(event, indent=2))
+
+
 def _symbols(value: str) -> list[str]:
     symbols = [symbol.strip().upper() for symbol in value.split(",") if symbol.strip()]
     if not symbols:
@@ -74,6 +82,9 @@ def main() -> None:
     live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
     live_subparsers.add_parser(
         "read-only-cycle", help="Query paper account and market data; never invokes execution"
+    )
+    live_subparsers.add_parser(
+        "monitor-trade-updates", help="Journal paper trade updates; never submits an order"
     )
 
     strategy_parser = subparsers.add_parser(
@@ -105,6 +116,11 @@ def main() -> None:
     if args.command == "live" and args.live_command == "read-only-cycle":
         try:
             asyncio.run(_read_only_cycle())
+        except RuntimeError as exc:
+            parser.error(str(exc))
+    if args.command == "live" and args.live_command == "monitor-trade-updates":
+        try:
+            asyncio.run(_monitor_trade_updates())
         except RuntimeError as exc:
             parser.error(str(exc))
     if args.command == "strategy" and args.strategy_command == "backtest":

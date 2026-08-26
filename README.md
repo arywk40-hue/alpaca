@@ -98,6 +98,14 @@ form an IV state. Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separ
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 
+When paper execution is separately authorized, retain `DRY_RUN=true` first. VegaGuard will journal
+the exact validated `mleg` payload without calling MCP. Only after that output is reviewed should a
+paper-only operator set `DRY_RUN=false`. The lifecycle monitor does not submit orders:
+
+```bash
+vegaguard live monitor-trade-updates
+```
+
 ## Current scope
 
 The current implementation includes a shared live/replay deterministic scorer, defined-risk debit

@@ -1,4 +1,8 @@
+import pytest
+
 from vegaguard.config import Settings
+from vegaguard.execution import PaperExecutionAgent
+from vegaguard.journal import DecisionJournal
 from vegaguard.models import OptionCandidate, Thesis
 from vegaguard.scanner import ScanResult
 from vegaguard.service import AutonomousCycle
@@ -9,6 +13,11 @@ from vegaguard.strategy.spread_builder import DebitSpread
 class NoopExecutor:
     async def submit(self, *_args):  # pragma: no cover - not used by these unit tests
         raise AssertionError("read-only plan construction must not submit an order")
+
+
+class NoCallMCP:
+    async def call(self, *_args):
+        raise AssertionError("end-to-end dry run must not invoke MCP")
 
 
 def _scan() -> ScanResult:
@@ -67,3 +76,35 @@ def test_live_plan_uses_the_same_defined_risk_debit_spread_as_backtest():
     assert [leg.side.value for leg in plan.legs] == ["buy", "sell"]
     assert plan.limit_price == 1.3
     assert plan.max_loss_usd == 130
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_path, monkeypatch):
+    settings = Settings(underlying_universe="SPY", allow_order_execution=True, dry_run=True)
+    executor = PaperExecutionAgent(
+        settings, DecisionJournal(tmp_path / "journal.jsonl"), NoCallMCP()
+    )
+    cycle = AutonomousCycle(settings, executor)
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
+
+    class TradeThesis:
+        async def evaluate(self, opportunity):
+            return Thesis(
+                action="trade",
+                confidence=0.8,
+                rationale="Validated evidence supports this bounded paper debit-spread dry run.",
+                invalidation="Exit on the deterministic price, time, or liquidity triggers.",
+                candidate_symbol=opportunity.candidate.symbol,
+            )
+
+    async def scan(_underlying):
+        return _scan()
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    cycle._thesis_agent = TradeThesis()
+    result = await cycle.run_once()
+    assert result["result"]["status"] == "dry_run"
+    assert result["plan"]["strategy"] == "debit_spread"
