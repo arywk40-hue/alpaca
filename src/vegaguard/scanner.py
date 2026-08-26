@@ -6,6 +6,7 @@ from .alpaca_api import AlpacaRESTClient
 from .config import Settings
 from .models import Opportunity, OptionCandidate
 from .strategy.indicators import ema, percent_return, realized_volatility, volume_ratio, vwap
+from .strategy.options_math import black_scholes_delta, quote_implied_volatility
 from .strategy.scorer import Regime, SignalInputs, SignalScore, score_signal
 from .strategy.spread_builder import DebitSpread, build_debit_spread
 
@@ -135,10 +136,12 @@ class OpportunityScanner:
             reasons.append("insufficient completed 30-minute bars")
         if len(market_closes) < 2:
             reasons.append("insufficient SPY market-alignment bars")
-        iv_values = self._iv_values(snapshots)
-        iv = self._current_iv(underlying, snapshots, now) if iv_values else None
+        iv_values = self._iv_values(snapshots, underlying_price=intraday_closes[-1], now=now)
+        iv = self._current_iv(underlying, snapshots, now, values=iv_values) if iv_values else None
         if not iv_values:
-            reasons.append("option snapshots contained no implied volatility or Greeks")
+            reasons.append(
+                "option snapshots contained no IV/Greeks or fresh solvable quote-derived IV"
+            )
         elif iv is None:
             reasons.append("implied-volatility state requires two fresh scanner observations")
         if reasons:
@@ -176,9 +179,14 @@ class OpportunityScanner:
         )
 
     def _current_iv(
-        self, underlying: str, snapshots: dict[str, dict], now: datetime
+        self,
+        underlying: str,
+        snapshots: dict[str, dict],
+        now: datetime,
+        *,
+        values: list[float] | None = None,
     ) -> tuple[float, float] | None:
-        values = self._iv_values(snapshots)
+        values = values if values is not None else self._iv_values(snapshots, now=now)
         if not values:
             return None
         current = sorted(values)[len(values) // 2]
@@ -192,18 +200,57 @@ class OpportunityScanner:
             return None
         return current, previous[1]
 
-    @staticmethod
-    def _iv_values(snapshots: dict[str, dict]) -> list[float]:
+    def _iv_values(
+        self,
+        snapshots: dict[str, dict],
+        *,
+        underlying_price: float | None = None,
+        now: datetime | None = None,
+    ) -> list[float]:
         values: list[float] = []
-        for snapshot in snapshots.values():
+        for symbol, snapshot in snapshots.items():
             value = snapshot.get("impliedVolatility", snapshot.get("implied_volatility"))
-            if value is None:
+            if value is not None:
+                try:
+                    values.append(float(value))
+                    continue
+                except (TypeError, ValueError):
+                    pass
+            if underlying_price is None or now is None:
                 continue
-            try:
-                values.append(float(value))
-            except (TypeError, ValueError):
-                continue
+            derived = self._quote_derived_iv(symbol, snapshot, underlying_price, now)
+            if derived is not None:
+                values.append(derived)
         return values
+
+    def _quote_derived_iv(
+        self, symbol: str, snapshot: dict, underlying_price: float, now: datetime
+    ) -> float | None:
+        parsed = parse_option_symbol(symbol)
+        if parsed is None:
+            return None
+        _, expiry, option_type, strike = parsed
+        dte = (expiry - now.date()).days
+        quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
+        timestamp = quote.get("t") or quote.get("timestamp")
+        if (
+            dte <= 0
+            or not timestamp
+            or now - self._parse_timestamp(str(timestamp)) > timedelta(minutes=15)
+        ):
+            return None
+        bid = float(quote.get("bp", quote.get("bid_price", 0)))
+        ask = float(quote.get("ap", quote.get("ask_price", 0)))
+        if bid <= 0 or ask <= bid:
+            return None
+        return quote_implied_volatility(
+            spot=underlying_price,
+            strike=strike,
+            years=dte / 365,
+            option_price=(bid + ask) / 2,
+            option_type=option_type,
+            rate=self.settings.quote_derived_risk_free_rate,
+        )
 
     def _option_candidates(
         self, underlying: str, underlying_price: float, snapshots: dict[str, dict], now: datetime
@@ -228,7 +275,22 @@ class OpportunityScanner:
             delta = greeks.get("delta")
             iv = snapshot.get("impliedVolatility", snapshot.get("implied_volatility"))
             dte = (expiry - now.date()).days
-            if bid <= 0 or ask <= bid or delta is None or iv is None:
+            if bid <= 0 or ask <= bid:
+                continue
+            if iv is None:
+                iv = self._quote_derived_iv(symbol, snapshot, underlying_price, now)
+            if iv is None:
+                continue
+            if delta is None:
+                delta = black_scholes_delta(
+                    spot=underlying_price,
+                    strike=strike,
+                    years=dte / 365,
+                    volatility=float(iv),
+                    option_type=option_type,
+                    rate=self.settings.quote_derived_risk_free_rate,
+                )
+            if delta is None:
                 continue
             candidate = OptionCandidate(
                 underlying=underlying,

@@ -41,8 +41,10 @@ The first pass may correctly abstain because IV state needs a second snapshot. O
 each underlying must show either a typed opportunity/spread or an explicit no-trade reason.
 The first observation is written to the local journal and is valid for eight hours, so the second
 scan may be a new invocation or a second cycle in the same process.
-If the result says snapshots contain no implied volatility or Greeks, stop here: the account's
-current option-data entitlement cannot support this IV-filtered strategy and the agent must abstain.
+If Alpaca omits IV/Greeks but current option quotes are available, VegaGuard derives IV and delta
+deterministically from the quote midpoint and OCC metadata. If the result still says there is no
+fresh solvable quote-derived IV, stop here: the session is closed/stale or the account's available
+data cannot support this IV-filtered strategy, and the agent must abstain.
 
 ## 3. Order-shape proof without an order
 

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     risk_fraction_per_trade: float = Field(default=0.005, gt=0, le=0.02)
     max_trade_risk_usd: float = Field(default=500.0, gt=0)
     max_bid_ask_spread_pct: float = Field(default=0.08, gt=0, le=1)
+    quote_derived_risk_free_rate: float = Field(default=0.04, ge=0, le=0.10)
     min_dte: int = Field(default=14, ge=1)
     max_dte: int = Field(default=28, ge=1)
     underlying_universe: str = "SPY,QQQ,IWM"

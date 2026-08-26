@@ -43,7 +43,7 @@ class OptionCandidate(BaseModel):
 
     @property
     def spread_pct(self) -> float:
-        return (self.ask - self.bid) / self.midpoint if self.midpoint else 1.0
+        return round((self.ask - self.bid) / self.midpoint, 10) if self.midpoint else 1.0
 
 
 class Opportunity(BaseModel):

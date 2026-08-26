@@ -70,5 +70,21 @@ def test_live_scanner_reports_unavailable_greeks_as_data_limitation_not_missing_
         now,
     )
     assert inputs is None
-    assert "option snapshots contained no implied volatility or Greeks" in reasons
+    assert "option snapshots contained no IV/Greeks or fresh solvable quote-derived IV" in reasons
     assert not any("two fresh" in reason for reason in reasons)
+
+
+def test_live_scanner_derives_iv_and_delta_from_fresh_observed_option_quotes():
+    now = datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
+    scanner = OpportunityScanner(Settings(), alpaca=object())
+    snapshots = {
+        "SPY260916C00100000": {
+            "latestQuote": {"t": now.isoformat(), "bp": 2.4, "ap": 2.6},
+        }
+    }
+    iv_values = scanner._iv_values(snapshots, underlying_price=100, now=now)
+    assert iv_values and iv_values[0] > 0
+    candidates = scanner._option_candidates("SPY", 100, snapshots, now)
+    assert len(candidates) == 1
+    assert candidates[0].implied_volatility is not None
+    assert candidates[0].delta is not None

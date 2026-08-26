@@ -110,10 +110,11 @@ Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 
-If the scan instead says option snapshots contain no implied volatility or Greeks, the account's
-current option-data entitlement cannot support this IV-filtered strategy. VegaGuard will abstain;
-it does not estimate or invent Greeks. Use an Alpaca option-data entitlement/feed that supplies
-those fields before attempting paper-order acceptance.
+When Alpaca omits IV/Greeks, VegaGuard can deterministically derive them from a fresh observed
+bid/ask, the OCC contract metadata, and the configured risk-free rate using Black–Scholes inversion.
+These are labeled quote-derived inputs, not forecasts or LLM output. If the scan still says no
+fresh solvable quote-derived IV, the session is closed/stale or the account's available data cannot
+support this IV-filtered strategy; VegaGuard will abstain rather than invent inputs.
 
 ### Autonomous scheduler and dashboard
 
