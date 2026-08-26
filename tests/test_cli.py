@@ -43,3 +43,20 @@ async def test_multi_cycle_read_only_command_reuses_one_scanner_and_never_execut
 async def test_multi_cycle_read_only_validates_the_interval_before_creating_clients():
     with pytest.raises(ValueError, match="at least 60"):
         await cli._read_only_cycle(cycles=2, interval_seconds=59)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_evidence_command_is_read_only(monkeypatch, capsys):
+    class FakeJournal:
+        def complete_trade_evidence(self):
+            return [{"client_order_id": "vg-paper-1", "realized_pnl": 12.5}]
+
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings())
+    monkeypatch.setattr(cli, "DecisionJournal", FakeJournal)
+    await cli._lifecycle_evidence()
+    assert json.loads(capsys.readouterr().out) == {
+        "mode": "read_only_lifecycle_evidence",
+        "paper_only": True,
+        "complete_trade_count": 1,
+        "trades": [{"client_order_id": "vg-paper-1", "realized_pnl": 12.5}],
+    }

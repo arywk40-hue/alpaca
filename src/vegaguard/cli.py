@@ -67,6 +67,22 @@ async def _monitor_trade_updates() -> None:
         print(json.dumps(event, indent=2))
 
 
+async def _lifecycle_evidence() -> None:
+    settings = get_settings()
+    trades = DecisionJournal().complete_trade_evidence()
+    print(
+        json.dumps(
+            {
+                "mode": "read_only_lifecycle_evidence",
+                "paper_only": settings.alpaca_paper_trade,
+                "complete_trade_count": len(trades),
+                "trades": trades,
+            },
+            indent=2,
+        )
+    )
+
+
 async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     settings = get_settings()
     journal = DecisionJournal()
@@ -119,6 +135,9 @@ def main() -> None:
     live_subparsers.add_parser(
         "monitor-trade-updates", help="Journal paper trade updates; never submits an order"
     )
+    live_subparsers.add_parser(
+        "lifecycle-evidence", help="Read journaled filled-and-exited paper trade evidence"
+    )
     scheduler_parser = live_subparsers.add_parser(
         "run-scheduler", help="Run the paper-only cycle every N seconds during market hours"
     )
@@ -166,6 +185,8 @@ def main() -> None:
             asyncio.run(_monitor_trade_updates())
         except RuntimeError as exc:
             parser.error(str(exc))
+    if args.command == "live" and args.live_command == "lifecycle-evidence":
+        asyncio.run(_lifecycle_evidence())
     if args.command == "live" and args.live_command == "run-scheduler":
         try:
             asyncio.run(_run_scheduler(args.interval_seconds, args.max_cycles))

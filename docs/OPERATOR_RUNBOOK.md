@@ -35,7 +35,8 @@ Actual paper submission requires the operator to deliberately set both `ALLOW_OR
 
 ```bash
 vegaguard live monitor-trade-updates
+vegaguard live lifecycle-evidence
 uvicorn vegaguard.api:app --reload
 ```
 
-Do not claim P&L until an order was submitted, filled, closed, and journaled. When the market is closed or market data is insufficient, preserve the stated abstention reason.
+`lifecycle-evidence` is an offline, read-only report. It includes only trades for which the durable journal proves an entry fill, exit fill, exit reason, and realized paper P&L. Do not claim P&L until this command reports a completed trade. When the market is closed or market data is insufficient, preserve the stated abstention reason.

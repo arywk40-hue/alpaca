@@ -114,6 +114,57 @@ class DecisionJournal:
                     return None
         return None
 
+    def complete_trade_evidence(self) -> list[dict]:
+        """Return only journal-proven, filled-and-exited paper trade records."""
+        if not self.path.exists():
+            return []
+        entries: list[dict] = []
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        entry_fills = {
+            (entry.get("plan") or {}).get("client_order_id"): entry
+            for entry in entries
+            if entry.get("event") == "position_entry_filled"
+            and (entry.get("plan") or {}).get("client_order_id")
+        }
+        exits = {
+            (entry.get("plan") or {}).get("parent_client_order_id"): entry
+            for entry in entries
+            if entry.get("event") == "exit_fill_reconciled"
+            and (entry.get("plan") or {}).get("parent_client_order_id")
+        }
+        outcomes = {
+            str((entry.get("payload") or {}).get("parent_client_order_id")): entry
+            for entry in entries
+            if entry.get("event") == "shadow_outcome_recorded"
+            and (entry.get("payload") or {}).get("parent_client_order_id")
+        }
+        evidence: list[dict] = []
+        for client_order_id, entry_fill in entry_fills.items():
+            exit_fill = exits.get(client_order_id)
+            outcome = outcomes.get(client_order_id)
+            if not exit_fill or not outcome:
+                continue
+            plan = entry_fill["plan"]
+            evidence.append(
+                {
+                    "client_order_id": client_order_id,
+                    "underlying": plan["underlying"],
+                    "strategy": plan["strategy"],
+                    "quantity": plan["qty"],
+                    "entry_filled_at": entry_fill["timestamp"],
+                    "entry_debit": entry_fill["payload"]["filled_price"],
+                    "exit_filled_at": exit_fill["timestamp"],
+                    "exit_credit": exit_fill["payload"]["filled_price"],
+                    "exit_reason": exit_fill["payload"]["reason"],
+                    "realized_pnl": outcome["payload"]["selected_net_pnl"],
+                }
+            )
+        return evidence
+
     def _has_event(self, event: str, client_order_id: str) -> bool:
         if not self.path.exists():
             return False

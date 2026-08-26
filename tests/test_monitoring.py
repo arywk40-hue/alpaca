@@ -133,6 +133,18 @@ def test_trade_update_uses_actual_entry_fill_for_realized_paper_pnl(tmp_path):
         }
     )
     assert journal.shadows()[0]["selected_net_pnl"] == 40.0
+    evidence = journal.complete_trade_evidence()
+    assert len(evidence) == 1
+    assert evidence[0]["client_order_id"] == entry.client_order_id
+    assert evidence[0]["underlying"] == "SPY"
+    assert evidence[0]["strategy"] == "debit_spread"
+    assert evidence[0]["quantity"] == 1
+    assert evidence[0]["entry_filled_at"]
+    assert evidence[0]["entry_debit"] == 1.4
+    assert evidence[0]["exit_filled_at"]
+    assert evidence[0]["exit_credit"] == 1.8
+    assert evidence[0]["exit_reason"] == "guardian_exit_fill"
+    assert evidence[0]["realized_pnl"] == 40.0
 
 
 @pytest.mark.asyncio

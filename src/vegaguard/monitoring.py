@@ -186,11 +186,22 @@ class PaperTradeUpdateMonitor:
         ):
             self.journal.append(
                 JournalEntry(
+                    event="exit_fill_reconciled",
+                    plan=exit_plan,
+                    payload={
+                        "filled_price": abs(float(filled_price)),
+                        "reason": "guardian_exit_fill",
+                    },
+                )
+            )
+            self.journal.append(
+                JournalEntry(
                     event="shadow_outcome_recorded",
                     payload={
                         "parent_client_order_id": entry_plan.client_order_id,
                         "selected_net_pnl": selected_net_pnl,
                         "shadow_net_pnl": 0.0,
+                        "exit_filled_price": abs(float(filled_price)),
                     },
                 )
             )
