@@ -7,6 +7,7 @@ from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
 from .monitoring import OrderLifecycle
+from .preflight import PaperPreflight
 from .service import AutonomousCycle
 
 app = FastAPI(title="VegaGuard", version="0.1.0")
@@ -33,6 +34,11 @@ async def mcp_tools() -> dict:
     settings = get_settings()
     tools = await AlpacaMCPClient(settings).tool_schemas()
     return {"tools": tools}
+
+
+@app.get("/preflight")
+async def preflight() -> dict:
+    return await PaperPreflight(get_settings()).run()
 
 
 @app.get("/journal")

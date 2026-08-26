@@ -15,4 +15,5 @@ reports/historical_strategy_backtest.md
 results/historical_strategy_backtest.json
 data/*.jsonl
 data/*.sqlite3
+data/mcp_preflight.json
 results/*.json

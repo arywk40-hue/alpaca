@@ -11,6 +11,7 @@ from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
 from .monitoring import PaperTradeUpdateMonitor
+from .preflight import PaperPreflight
 from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
@@ -66,6 +67,12 @@ async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     print(json.dumps(await scheduler.run(max_cycles=max_cycles), indent=2))
 
 
+async def _preflight() -> None:
+    report = await PaperPreflight(get_settings()).run()
+    path = PaperPreflight.write_report(report)
+    print(json.dumps({**report, "report_path": str(path)}, indent=2))
+
+
 def _symbols(value: str) -> list[str]:
     symbols = [symbol.strip().upper() for symbol in value.split(",") if symbol.strip()]
     if not symbols:
@@ -77,6 +84,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="VegaGuard paper-options agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("inspect-mcp")
+    subparsers.add_parser(
+        "preflight", help="Verify paper REST, option data, and MCP setup read-only"
+    )
 
     data_parser = subparsers.add_parser("data", help="Read-only historical data commands")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
@@ -124,6 +134,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "inspect-mcp":
         asyncio.run(_inspect_mcp())
+    if args.command == "preflight":
+        try:
+            asyncio.run(_preflight())
+        except RuntimeError as exc:
+            parser.error(str(exc))
     if args.command == "data" and args.data_command == "fetch-history":
         try:
             asyncio.run(_fetch_history(args))

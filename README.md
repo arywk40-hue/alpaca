@@ -33,7 +33,12 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
 
    ```bash
    vegaguard inspect-mcp
+   vegaguard preflight
    ```
+
+   `preflight` makes concurrent, read-only account, clock, option-snapshot, and MCP-schema checks.
+   It writes a secret-free report to `data/mcp_preflight.json`; only set `ALLOW_ORDER_EXECUTION=true`
+   after its status is `ready` and the tool set has been reviewed.
 
 5. Run tests and the API:
 
