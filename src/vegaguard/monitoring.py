@@ -12,7 +12,7 @@ import websockets
 
 from .config import Settings
 from .journal import DecisionJournal
-from .models import JournalEntry
+from .models import JournalEntry, TradePlan
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,9 @@ class PositionGuardian:
         if expiration.astimezone(UTC).date() - now.date() <= timedelta(days=2):
             return ExitDecision("exit", "expiry_exit", spread_return)
         return ExitDecision("hold", "no_exit_trigger", spread_return)
+
+    def closing_plan(self, plan: TradePlan, *, executable_exit_value: float) -> TradePlan:
+        return plan.closing_plan(executable_credit=executable_exit_value)
 
 
 class OrderLifecycle:
@@ -142,4 +145,38 @@ class PaperTradeUpdateMonitor:
                 event = payload.get("data", {})
                 self.journal.append(JournalEntry(event="trade_update", payload=event))
                 self.lifecycle.apply(event, source="trade_updates")
+                self._record_exit_outcome(event)
                 yield event
+
+    def _record_exit_outcome(self, event: dict[str, Any]) -> None:
+        """Finalize the no-trade shadow when a previously submitted close fills."""
+        order = event.get("order", event)
+        if str(event.get("event") or order.get("status")) != "fill":
+            return
+        exit_plan = self.journal.plan_for_client_order_id(str(order.get("client_order_id") or ""))
+        if exit_plan is None or not exit_plan.is_closing or not exit_plan.parent_client_order_id:
+            return
+        entry_plan = self.journal.plan_for_client_order_id(exit_plan.parent_client_order_id)
+        filled_price = order.get("filled_avg_price")
+        if entry_plan is None or filled_price is None:
+            return
+        selected_net_pnl = round(
+            (abs(float(filled_price)) - entry_plan.limit_price) * 100 * entry_plan.qty,
+            2,
+        )
+        if self.journal.record_shadow_outcome(
+            entry_plan.client_order_id,
+            selected_net_pnl=selected_net_pnl,
+            shadow_net_pnl=0.0,
+            close_reason="guardian_exit_fill",
+        ):
+            self.journal.append(
+                JournalEntry(
+                    event="shadow_outcome_recorded",
+                    payload={
+                        "parent_client_order_id": entry_plan.client_order_id,
+                        "selected_net_pnl": selected_net_pnl,
+                        "shadow_net_pnl": 0.0,
+                    },
+                )
+            )

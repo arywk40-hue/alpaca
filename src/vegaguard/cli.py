@@ -11,6 +11,7 @@ from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
 from .monitoring import PaperTradeUpdateMonitor
+from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
 from .strategy.replay import load_observations, run_replay, write_report
@@ -55,6 +56,16 @@ async def _monitor_trade_updates() -> None:
         print(json.dumps(event, indent=2))
 
 
+async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
+    settings = get_settings()
+    journal = DecisionJournal()
+    executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
+    scheduler = MarketHoursScheduler(
+        AutonomousCycle(settings, executor), journal, interval_seconds=interval_seconds
+    )
+    print(json.dumps(await scheduler.run(max_cycles=max_cycles), indent=2))
+
+
 def _symbols(value: str) -> list[str]:
     symbols = [symbol.strip().upper() for symbol in value.split(",") if symbol.strip()]
     if not symbols:
@@ -86,6 +97,11 @@ def main() -> None:
     live_subparsers.add_parser(
         "monitor-trade-updates", help="Journal paper trade updates; never submits an order"
     )
+    scheduler_parser = live_subparsers.add_parser(
+        "run-scheduler", help="Run the paper-only cycle every N seconds during market hours"
+    )
+    scheduler_parser.add_argument("--interval-seconds", type=int, default=900)
+    scheduler_parser.add_argument("--max-cycles", type=int)
 
     strategy_parser = subparsers.add_parser(
         "strategy", help="Deterministic local research commands"
@@ -122,6 +138,11 @@ def main() -> None:
         try:
             asyncio.run(_monitor_trade_updates())
         except RuntimeError as exc:
+            parser.error(str(exc))
+    if args.command == "live" and args.live_command == "run-scheduler":
+        try:
+            asyncio.run(_run_scheduler(args.interval_seconds, args.max_cycles))
+        except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
     if args.command == "strategy" and args.strategy_command == "backtest":
         start = datetime.fromisoformat(args.start)

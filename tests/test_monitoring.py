@@ -1,7 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from test_execution import NoCallMCP, plan
+
+from vegaguard.config import Settings
+from vegaguard.execution import PaperExecutionAgent
 from vegaguard.journal import DecisionJournal
+from vegaguard.models import GateResult, JournalEntry
 from vegaguard.monitoring import OrderLifecycle, PositionGuardian
+from vegaguard.service import AutonomousCycle
 
 
 def test_guardian_applies_profit_stop_and_reversal_exits_without_execution():
@@ -64,3 +71,72 @@ def test_lifecycle_handles_partial_fill_and_rest_reconnect_idempotently(tmp_path
         [{"client_order_id": "vg-1", "status": "filled", "filled_qty": "2"}]
     )
     assert repeated[0] == reconciled[0]
+
+
+def test_trade_update_records_selected_vs_no_trade_outcome_on_guardian_exit_fill(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.register_shadow(entry, regime="bullish")
+    journal.append(
+        JournalEntry(
+            event="order_submission_intent", plan=entry, gate=GateResult(approved=True, reasons=[])
+        )
+    )
+    exit_plan = entry.closing_plan(executable_credit=1.8)
+    journal.append(
+        JournalEntry(
+            event="exit_submission_intent",
+            plan=exit_plan,
+            gate=GateResult(approved=True, reasons=[]),
+        )
+    )
+    from vegaguard.monitoring import PaperTradeUpdateMonitor
+
+    PaperTradeUpdateMonitor(Settings(), journal)._record_exit_outcome(
+        {
+            "event": "fill",
+            "order": {"client_order_id": exit_plan.client_order_id, "filled_avg_price": "1.8"},
+        }
+    )
+    shadow = journal.shadows()[0]
+    assert shadow["selected_net_pnl"] == 50.0
+    assert shadow["shadow_net_pnl"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(tmp_path):
+    settings = Settings(allow_order_execution=True, dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    executor = PaperExecutionAgent(settings, journal, NoCallMCP())
+    cycle = AutonomousCycle(settings, executor)
+    entry = plan()
+    journal.append(
+        JournalEntry(
+            event="order_submission_intent", plan=entry, gate=GateResult(approved=True, reasons=[])
+        )
+    )
+
+    async def account_state():
+        return {}, {"is_open": True}, []
+
+    async def orders():
+        return [
+            {
+                "client_order_id": entry.client_order_id,
+                "status": "filled",
+                "filled_at": "2026-09-01T14:00:00Z",
+            }
+        ]
+
+    async def snapshots(_underlying):
+        return {
+            entry.legs[0].symbol: {"latestQuote": {"bp": 2.6, "ap": 2.7}},
+            entry.legs[1].symbol: {"latestQuote": {"bp": 0.4, "ap": 0.5}},
+        }
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = orders
+    cycle.alpaca.option_snapshots = snapshots
+    managed = await cycle.manage_open_spreads()
+    assert managed["managed"][0]["status"] == "dry_run"
+    assert managed["managed"][0]["reason"] == "take_profit"

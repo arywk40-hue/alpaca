@@ -71,3 +71,20 @@ async def test_dry_run_is_journaled_and_duplicate_client_id_is_blocked(tmp_path)
     duplicate = await agent.submit(trade_plan, gate)
     assert duplicate == {"status": "blocked", "reasons": ["duplicate client_order_id"]}
     assert [entry["event"] for entry in journal.latest()] == ["dry_run_order", "gate_evaluated"]
+
+
+@pytest.mark.asyncio
+async def test_guardian_exit_reverses_legs_atomically_and_stays_dry_run(tmp_path):
+    settings = Settings(allow_order_execution=True, dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    exit_plan = plan().closing_plan(executable_credit=1.8)
+    result = await PaperExecutionAgent(settings, journal, NoCallMCP()).submit_exit(
+        exit_plan, reason="take_profit"
+    )
+    assert result["status"] == "dry_run"
+    assert result["mcp_arguments"]["order_class"] == "mleg"
+    assert result["mcp_arguments"]["limit_price"] == "-1.8"
+    assert [leg["position_intent"] for leg in result["mcp_arguments"]["legs"]] == [
+        "sell_to_close",
+        "buy_to_close",
+    ]

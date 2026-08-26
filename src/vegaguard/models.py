@@ -67,11 +67,14 @@ class TradePlan(BaseModel):
     strategy: str = Field(pattern="^(single_leg|debit_spread)$")
     legs: list[OptionLeg] = Field(min_length=1, max_length=2)
     qty: int = Field(default=1, ge=1)
-    limit_price: float = Field(gt=0)
+    # Alpaca represents a multi-leg credit limit as a negative number. Entries
+    # are debits; a generated closing spread is a credit.
+    limit_price: float
     max_loss_usd: float = Field(gt=0)
     candidate: OptionCandidate
     thesis: Thesis
     client_order_id: str = Field(default_factory=lambda: f"vg-{uuid4().hex[:20]}")
+    parent_client_order_id: str | None = None
 
     @model_validator(mode="after")
     def plan_shape_is_consistent(self):
@@ -79,12 +82,69 @@ class TradePlan(BaseModel):
             raise ValueError("single_leg plans need exactly one leg")
         if self.strategy == "debit_spread" and len(self.legs) != 2:
             raise ValueError("debit_spread plans need exactly two legs")
-        if self.strategy == "debit_spread" and {leg.side for leg in self.legs} != {
-            Side.BUY,
-            Side.SELL,
-        }:
-            raise ValueError("debit_spread plans need one buy and one sell leg")
+        if self.limit_price == 0:
+            raise ValueError("limit price cannot be zero")
+        if self.strategy == "debit_spread":
+            if {leg.side for leg in self.legs} != {Side.BUY, Side.SELL}:
+                raise ValueError("debit_spread plans need one buy and one sell leg")
+            opening = {
+                (Side.BUY, PositionIntent.BUY_TO_OPEN),
+                (Side.SELL, PositionIntent.SELL_TO_OPEN),
+            }
+            closing = {
+                (Side.SELL, PositionIntent.SELL_TO_CLOSE),
+                (Side.BUY, PositionIntent.BUY_TO_CLOSE),
+            }
+            intents = {(leg.side, leg.position_intent) for leg in self.legs}
+            if intents != opening and intents != closing:
+                raise ValueError("debit spread legs must be consistently opened or closed")
+            if intents == opening and self.limit_price < 0:
+                raise ValueError("opening debit spread must use a positive debit limit")
+            if intents == closing and self.limit_price > 0:
+                raise ValueError("closing debit spread must use a negative credit limit")
         return self
+
+    @property
+    def is_closing(self) -> bool:
+        return bool(self.legs) and all(
+            leg.position_intent in {PositionIntent.BUY_TO_CLOSE, PositionIntent.SELL_TO_CLOSE}
+            for leg in self.legs
+        )
+
+    def closing_plan(self, *, executable_credit: float) -> "TradePlan":
+        """Create the only permitted exit: reverse every leg atomically.
+
+        ``executable_credit`` is the conservative long-bid minus short-ask
+        value. Alpaca represents a credit multi-leg limit with a negative price.
+        """
+        if self.is_closing:
+            raise ValueError("cannot close an already-closing plan")
+        if executable_credit <= 0:
+            raise ValueError("executable closing credit must be positive")
+        transitions = {
+            PositionIntent.BUY_TO_OPEN: (Side.SELL, PositionIntent.SELL_TO_CLOSE),
+            PositionIntent.SELL_TO_OPEN: (Side.BUY, PositionIntent.BUY_TO_CLOSE),
+        }
+        return TradePlan(
+            underlying=self.underlying,
+            strategy=self.strategy,
+            legs=[
+                OptionLeg(
+                    symbol=leg.symbol,
+                    side=transitions[leg.position_intent][0],
+                    ratio_qty=leg.ratio_qty,
+                    position_intent=transitions[leg.position_intent][1],
+                )
+                for leg in self.legs
+            ],
+            qty=self.qty,
+            limit_price=-round(executable_credit, 4),
+            max_loss_usd=self.max_loss_usd,
+            candidate=self.candidate,
+            thesis=self.thesis,
+            client_order_id=f"vg-exit-{uuid4().hex[:18]}",
+            parent_client_order_id=self.client_order_id,
+        )
 
     def mcp_arguments(self) -> dict:
         if self.strategy == "single_leg":

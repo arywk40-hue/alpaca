@@ -108,3 +108,22 @@ async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_pa
     result = await cycle.run_once()
     assert result["result"]["status"] == "dry_run"
     assert result["plan"]["strategy"] == "debit_spread"
+
+
+@pytest.mark.asyncio
+async def test_closed_market_returns_before_scanning_or_an_llm_call(monkeypatch):
+    cycle = AutonomousCycle(Settings(underlying_universe="SPY"), NoopExecutor())
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": False}, []
+
+    async def scan(_underlying):
+        raise AssertionError("a closed market must not scan or call an agent")
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    assert await cycle.run_once() == {
+        "status": "no_trade",
+        "reason": "market_closed",
+        "paper_only": True,
+    }

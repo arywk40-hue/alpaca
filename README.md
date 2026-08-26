@@ -98,9 +98,28 @@ form an IV state. Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separ
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 
+### Autonomous scheduler and dashboard
+
+The scheduler asks Alpaca's paper clock on each cycle. It runs the bounded cycle only while the
+market is open and journals the outcome into both `data/journal.jsonl` and a queryable
+`data/journal.sqlite3` audit store. Start with one safe cycle:
+
+```bash
+vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
+uvicorn vegaguard.api:app --reload
+```
+
+Open `http://127.0.0.1:8000/` for the demo dashboard. It contains no trade controls: it shows the
+journal, immutable selected-vs-no-trade shadow records, and completed audit deltas. Every
+gate-approved plan receives a shadow record before the executor can emit its dry-run or MCP result.
+
 When paper execution is separately authorized, retain `DRY_RUN=true` first. VegaGuard will journal
 the exact validated `mleg` payload without calling MCP. Only after that output is reviewed should a
-paper-only operator set `DRY_RUN=false`. The lifecycle monitor does not submit orders:
+paper-only operator set `DRY_RUN=false`. At each scheduled market-hours cycle, the guardian checks
+filled, journaled spreads against conservative long-bid/short-ask exit value. A profit, stop, time,
+or expiry trigger can create only an atomic reversed-leg close order (`sell_to_close` plus
+`buy_to_close`); it follows the same execution and dry-run gates as entry. The trade-update monitor
+closes the immutable shadow record only after that close is filled:
 
 ```bash
 vegaguard live monitor-trade-updates

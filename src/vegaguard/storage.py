@@ -1,0 +1,149 @@
+"""Small SQLite read model for VegaGuard's durable paper-trading audit trail."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+
+class PaperLedger:
+    """Append-only event store plus immutable selected-vs-shadow trade records.
+
+    JSONL remains the human-readable audit artifact. This store makes the same
+    information queryable for the dashboard without allowing a later process to
+    rewrite a past decision.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    client_order_id TEXT,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS events_client_order_id_idx
+                    ON events(client_order_id);
+                CREATE TABLE IF NOT EXISTS shadow_trades (
+                    client_order_id TEXT PRIMARY KEY,
+                    underlying TEXT NOT NULL,
+                    regime TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    selected_plan_json TEXT NOT NULL,
+                    shadow_kind TEXT NOT NULL,
+                    shadow_plan_json TEXT NOT NULL,
+                    closed_at TEXT,
+                    selected_net_pnl REAL,
+                    shadow_net_pnl REAL,
+                    close_reason TEXT
+                );
+                """
+            )
+
+    def append_event(self, entry: Any) -> None:
+        payload = entry.model_dump(mode="json")
+        plan = payload.get("plan") or {}
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO events(timestamp, event, client_order_id, payload_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    payload["timestamp"],
+                    payload["event"],
+                    plan.get("client_order_id")
+                    or payload.get("payload", {}).get("client_order_id"),
+                    json.dumps(payload, separators=(",", ":")),
+                ),
+            )
+
+    def register_shadow(
+        self,
+        plan: Any,
+        *,
+        regime: str,
+        shadow_kind: str = "no_trade",
+        shadow_plan: dict[str, Any] | None = None,
+    ) -> bool:
+        """Persist the alternative at decision time; never overwrite it later."""
+        selected = plan.model_dump(mode="json")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO shadow_trades(
+                    client_order_id, underlying, regime, created_at, selected_plan_json,
+                    shadow_kind, shadow_plan_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    plan.client_order_id,
+                    plan.underlying,
+                    regime,
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(selected, separators=(",", ":")),
+                    shadow_kind,
+                    json.dumps(shadow_plan or {"kind": shadow_kind}, separators=(",", ":")),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def record_shadow_outcome(
+        self,
+        client_order_id: str,
+        *,
+        selected_net_pnl: float,
+        shadow_net_pnl: float,
+        close_reason: str,
+    ) -> bool:
+        """Close a shadow record once. Historical outcomes are immutable."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE shadow_trades
+                   SET closed_at = ?, selected_net_pnl = ?, shadow_net_pnl = ?, close_reason = ?
+                 WHERE client_order_id = ? AND closed_at IS NULL
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    selected_net_pnl,
+                    shadow_net_pnl,
+                    close_reason,
+                    client_order_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def shadows(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM shadow_trades ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "selected_plan": json.loads(row["selected_plan_json"]),
+                "shadow_plan": json.loads(row["shadow_plan_json"]),
+            }
+            for row in rows
+        ]
+
+    def event_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])

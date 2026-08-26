@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from .alpaca_api import AlpacaRESTClient
@@ -10,7 +11,7 @@ from .committee import (
 from .config import Settings
 from .execution import PaperExecutionAgent
 from .models import OptionLeg, PositionIntent, Side, Thesis, TradePlan
-from .monitoring import OrderLifecycle
+from .monitoring import OrderLifecycle, PositionGuardian
 from .risk import DeterministicRiskGate
 from .scanner import OpportunityScanner, ScanResult
 from .strategy.spread_builder import position_size
@@ -66,8 +67,64 @@ class AutonomousCycle:
             ],
         }
 
+    async def manage_open_spreads(self) -> dict[str, Any]:
+        """Evaluate filled tracked spreads and submit only deterministic close orders."""
+        _, clock, _ = await self._account_state()
+        if not bool(clock.get("is_open")):
+            return {"status": "market_closed", "managed": []}
+        guardian = PositionGuardian()
+        managed: list[dict[str, Any]] = []
+        for order in await self.alpaca.orders():
+            if str(order.get("status")) != "filled":
+                continue
+            client_order_id = str(order.get("client_order_id") or "")
+            if not client_order_id or self.executor.journal.has_exit_for(client_order_id):
+                continue
+            plan = self.executor.journal.plan_for_client_order_id(client_order_id)
+            if plan is None or plan.is_closing or plan.strategy != "debit_spread":
+                continue
+            snapshots = await self.alpaca.option_snapshots(plan.underlying)
+            credit = self._executable_exit_credit(plan, snapshots)
+            if credit is None:
+                managed.append({"client_order_id": client_order_id, "status": "no_quote"})
+                continue
+            entered_at = self._order_timestamp(order.get("filled_at"))
+            expiration = datetime.fromisoformat(plan.candidate.expiration).replace(tzinfo=UTC)
+            decision = guardian.evaluate(
+                entry_debit=plan.limit_price,
+                executable_exit_value=credit,
+                entered_at=entered_at,
+                expiration=expiration,
+            )
+            if decision.action == "hold":
+                managed.append(
+                    {
+                        "client_order_id": client_order_id,
+                        "status": "hold",
+                        "reason": decision.reason,
+                    }
+                )
+                continue
+            exit_plan = guardian.closing_plan(plan, executable_exit_value=credit)
+            result = await self.executor.submit_exit(exit_plan, reason=decision.reason)
+            managed.append(
+                {
+                    "client_order_id": client_order_id,
+                    "status": result["status"],
+                    "reason": decision.reason,
+                    "exit_client_order_id": exit_plan.client_order_id,
+                }
+            )
+        return {"status": "ok", "managed": managed}
+
     async def run_once(self) -> dict[str, Any]:
         account, clock, positions = await self._account_state()
+        if not bool(clock.get("is_open")):
+            return {
+                "status": "no_trade",
+                "reason": "market_closed",
+                "paper_only": self.settings.alpaca_paper_trade,
+            }
         scans = [await self.scanner.scan(underlying) for underlying in self.settings.universe]
         candidates = [
             (scan, scan.spread.max_loss_per_contract)
@@ -115,6 +172,11 @@ class AutonomousCycle:
             open_positions=len(positions),
             buying_power=float(account.get("buying_power", 0)),
         )
+        if gate.approved:
+            self.executor.journal.register_shadow(
+                plan,
+                regime=selected.score.regime.value if selected.score else "unknown",
+            )
         result = await self.executor.submit(plan, gate)
         return {
             "underlying": selected.underlying,
@@ -175,6 +237,34 @@ class AutonomousCycle:
             candidate=scan.opportunity.candidate,
             thesis=thesis,
         )
+
+    @staticmethod
+    def _executable_exit_credit(plan: TradePlan, snapshots: dict[str, dict]) -> float | None:
+        quotes: dict[str, dict] = {}
+        for leg in plan.legs:
+            quote = (snapshots.get(leg.symbol) or {}).get("latestQuote") or (
+                snapshots.get(leg.symbol) or {}
+            ).get("latest_quote")
+            if not quote:
+                return None
+            quotes[leg.symbol] = quote
+        long_leg = next(leg for leg in plan.legs if leg.side is Side.BUY)
+        short_leg = next(leg for leg in plan.legs if leg.side is Side.SELL)
+        long_bid = float(
+            quotes[long_leg.symbol].get("bp", quotes[long_leg.symbol].get("bid_price", 0))
+        )
+        short_ask = float(
+            quotes[short_leg.symbol].get("ap", quotes[short_leg.symbol].get("ask_price", 0))
+        )
+        credit = round(long_bid - short_ask, 4)
+        return credit if credit > 0 else None
+
+    @staticmethod
+    def _order_timestamp(value: object) -> datetime:
+        if not value:
+            return datetime.now(UTC)
+        parsed = datetime.fromisoformat(str(value))
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
     @staticmethod
     def _serialize_scan(scan: ScanResult) -> dict[str, Any]:
