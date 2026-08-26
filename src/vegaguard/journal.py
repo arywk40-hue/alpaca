@@ -82,6 +82,53 @@ class DecisionJournal:
                 return True
         return False
 
+    def record_entry_fill(self, plan: TradePlan, *, filled_price: float, source: str) -> bool:
+        """Persist the actual paper fill once, for recovery and realized P&L."""
+        if self._has_event("position_entry_filled", plan.client_order_id):
+            return False
+        self.append(
+            JournalEntry(
+                event="position_entry_filled",
+                plan=plan,
+                payload={"filled_price": filled_price, "source": source},
+            )
+        )
+        return True
+
+    def entry_debit_for(self, client_order_id: str) -> float | None:
+        """Return the recorded actual entry debit, never an inferred market mark."""
+        if not self.path.exists():
+            return None
+        for line in reversed(self.path.read_text(encoding="utf-8").splitlines()):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                entry.get("event") == "position_entry_filled"
+                and (entry.get("plan") or {}).get("client_order_id") == client_order_id
+            ):
+                try:
+                    return float((entry.get("payload") or {}).get("filled_price"))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _has_event(self, event: str, client_order_id: str) -> bool:
+        if not self.path.exists():
+            return False
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                entry.get("event") == event
+                and (entry.get("plan") or {}).get("client_order_id") == client_order_id
+            ):
+                return True
+        return False
+
     def latest_iv_observation(self, underlying: str) -> tuple[datetime, float] | None:
         return self.ledger.latest_iv_observation(underlying)
 

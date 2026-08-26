@@ -7,7 +7,7 @@ from vegaguard.config import Settings
 from vegaguard.execution import PaperExecutionAgent
 from vegaguard.journal import DecisionJournal
 from vegaguard.models import GateResult, JournalEntry
-from vegaguard.monitoring import OrderLifecycle, PositionGuardian
+from vegaguard.monitoring import OrderLifecycle, PaperTradeUpdateMonitor, PositionGuardian
 from vegaguard.service import AutonomousCycle
 
 
@@ -90,8 +90,6 @@ def test_trade_update_records_selected_vs_no_trade_outcome_on_guardian_exit_fill
             gate=GateResult(approved=True, reasons=[]),
         )
     )
-    from vegaguard.monitoring import PaperTradeUpdateMonitor
-
     PaperTradeUpdateMonitor(Settings(), journal)._record_exit_outcome(
         {
             "event": "fill",
@@ -101,6 +99,40 @@ def test_trade_update_records_selected_vs_no_trade_outcome_on_guardian_exit_fill
     shadow = journal.shadows()[0]
     assert shadow["selected_net_pnl"] == 50.0
     assert shadow["shadow_net_pnl"] == 0.0
+
+
+def test_trade_update_uses_actual_entry_fill_for_realized_paper_pnl(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.register_shadow(entry, regime="bullish")
+    journal.append(
+        JournalEntry(
+            event="order_submission_intent", plan=entry, gate=GateResult(approved=True, reasons=[])
+        )
+    )
+    monitor = PaperTradeUpdateMonitor(Settings(), journal)
+    monitor._record_entry_fill(
+        {
+            "event": "fill",
+            "order": {"client_order_id": entry.client_order_id, "filled_avg_price": "1.4"},
+        }
+    )
+    assert journal.entry_debit_for(entry.client_order_id) == 1.4
+    exit_plan = entry.closing_plan(executable_credit=1.8)
+    journal.append(
+        JournalEntry(
+            event="exit_submission_intent",
+            plan=exit_plan,
+            gate=GateResult(approved=True, reasons=[]),
+        )
+    )
+    monitor._record_exit_outcome(
+        {
+            "event": "fill",
+            "order": {"client_order_id": exit_plan.client_order_id, "filled_avg_price": "1.8"},
+        }
+    )
+    assert journal.shadows()[0]["selected_net_pnl"] == 40.0
 
 
 @pytest.mark.asyncio
@@ -140,3 +172,5 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
     managed = await cycle.manage_open_spreads()
     assert managed["managed"][0]["status"] == "dry_run"
     assert managed["managed"][0]["reason"] == "take_profit"
+    marks = [event for event in journal.latest() if event["event"] == "position_mark"]
+    assert marks[0]["payload"]["unrealized_pnl"] == 80.0

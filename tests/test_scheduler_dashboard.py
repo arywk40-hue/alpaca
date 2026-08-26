@@ -2,7 +2,15 @@ import pytest
 
 from vegaguard.dashboard import dashboard_state
 from vegaguard.journal import DecisionJournal
-from vegaguard.models import OptionCandidate, OptionLeg, PositionIntent, Side, Thesis, TradePlan
+from vegaguard.models import (
+    JournalEntry,
+    OptionCandidate,
+    OptionLeg,
+    PositionIntent,
+    Side,
+    Thesis,
+    TradePlan,
+)
 from vegaguard.scheduler import MarketHoursScheduler
 
 
@@ -62,8 +70,18 @@ def test_shadow_ledger_is_immutable_and_dashboard_reads_it(tmp_path):
         "shadow_trade_count": 1,
         "completed_shadow_audits": 1,
         "selected_minus_shadow_pnl": 40.0,
+        "open_position_unrealized_pnl": 0,
     }
     assert state["shadows"][0]["regime"] == "bullish"
+
+
+def test_dashboard_reports_the_latest_open_position_mark(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    trade_plan = _plan()
+    journal.append(
+        JournalEntry(event="position_mark", plan=trade_plan, payload={"unrealized_pnl": 42.5})
+    )
+    assert dashboard_state(journal)["summary"]["open_position_unrealized_pnl"] == 42.5
 
 
 class _Cycle:

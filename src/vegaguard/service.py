@@ -10,7 +10,7 @@ from .committee import (
 )
 from .config import Settings
 from .execution import PaperExecutionAgent
-from .models import OptionLeg, PositionIntent, Side, Thesis, TradePlan
+from .models import JournalEntry, OptionLeg, PositionIntent, Side, Thesis, TradePlan
 from .monitoring import OrderLifecycle, PositionGuardian
 from .risk import DeterministicRiskGate
 from .scanner import OpportunityScanner, ScanResult
@@ -85,15 +85,28 @@ class AutonomousCycle:
             plan = self.executor.journal.plan_for_client_order_id(client_order_id)
             if plan is None or plan.is_closing or plan.strategy != "debit_spread":
                 continue
+            entry_debit = self._recorded_entry_debit(plan, order)
             snapshots = await self.alpaca.option_snapshots(plan.underlying)
             credit = self._executable_exit_credit(plan, snapshots)
             if credit is None:
                 managed.append({"client_order_id": client_order_id, "status": "no_quote"})
                 continue
+            unrealized_pnl = round((credit - entry_debit) * 100 * plan.qty, 2)
+            self.executor.journal.append(
+                JournalEntry(
+                    event="position_mark",
+                    plan=plan,
+                    payload={
+                        "entry_debit": entry_debit,
+                        "executable_exit_credit": credit,
+                        "unrealized_pnl": unrealized_pnl,
+                    },
+                )
+            )
             entered_at = self._order_timestamp(order.get("filled_at"))
             expiration = datetime.fromisoformat(plan.candidate.expiration).replace(tzinfo=UTC)
             decision = guardian.evaluate(
-                entry_debit=plan.limit_price,
+                entry_debit=entry_debit,
                 executable_exit_value=credit,
                 entered_at=entered_at,
                 expiration=expiration,
@@ -118,6 +131,19 @@ class AutonomousCycle:
                 }
             )
         return {"status": "ok", "managed": managed}
+
+    def _recorded_entry_debit(self, plan: TradePlan, order: dict) -> float:
+        recorded = self.executor.journal.entry_debit_for(plan.client_order_id)
+        if recorded is not None:
+            return recorded
+        try:
+            filled_price = abs(float(order.get("filled_avg_price")))
+        except (TypeError, ValueError):
+            filled_price = plan.limit_price
+        self.executor.journal.record_entry_fill(
+            plan, filled_price=filled_price, source="rest_reconcile"
+        )
+        return filled_price
 
     async def run_once(self) -> dict[str, Any]:
         account, clock, positions = await self._account_state()

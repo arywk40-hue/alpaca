@@ -11,9 +11,18 @@ from .journal import DecisionJournal
 def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, Any]:
     shadows = journal.shadows(limit)
     completed = [shadow for shadow in shadows if shadow["closed_at"]]
+    events = journal.latest(max(limit, 200))
+    latest_marks: dict[str, float] = {}
+    for event in reversed(events):
+        if event.get("event") != "position_mark":
+            continue
+        client_order_id = (event.get("plan") or {}).get("client_order_id")
+        value = (event.get("payload") or {}).get("unrealized_pnl")
+        if client_order_id and value is not None:
+            latest_marks[str(client_order_id)] = float(value)
     return {
         "event_count": journal.ledger.event_count(),
-        "journal": journal.latest(limit),
+        "journal": events[:limit],
         "shadows": shadows,
         "summary": {
             "shadow_trade_count": len(shadows),
@@ -25,6 +34,7 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
                 ),
                 2,
             ),
+            "open_position_unrealized_pnl": round(sum(latest_marks.values()), 2),
         },
     }
 
@@ -41,6 +51,6 @@ h1{{margin:0}} .sub{{color:#9fb0c9}} .grid{{display:grid;grid-template-columns:r
 <div id="cards" class="grid"></div><div class="grid"><section class="card"><h2>Shadow audit</h2><pre id="shadows">Loading…</pre></section>
 <section class="card"><h2>Journal timeline</h2><pre id="journal">Loading…</pre></section></div>
 <script>fetch('/dashboard/state').then(r=>r.json()).then(d=>{{
-document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Shadow trades',d.summary.shadow_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
+document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Shadow trades',d.summary.shadow_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl],['Open unrealized P&L','$'+d.summary.open_position_unrealized_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
 document.querySelector('#shadows').textContent=JSON.stringify(d.shadows,null,2);document.querySelector('#journal').textContent=JSON.stringify(d.journal,null,2);}}).catch(e=>document.body.append('Dashboard error: '+e));</script>
 </body></html>"""

@@ -145,8 +145,22 @@ class PaperTradeUpdateMonitor:
                 event = payload.get("data", {})
                 self.journal.append(JournalEntry(event="trade_update", payload=event))
                 self.lifecycle.apply(event, source="trade_updates")
+                self._record_entry_fill(event)
                 self._record_exit_outcome(event)
                 yield event
+
+    def _record_entry_fill(self, event: dict[str, Any]) -> None:
+        order = event.get("order", event)
+        if str(event.get("event") or order.get("status")) != "fill":
+            return
+        plan = self.journal.plan_for_client_order_id(str(order.get("client_order_id") or ""))
+        if plan is None or plan.is_closing:
+            return
+        try:
+            filled_price = abs(float(order.get("filled_avg_price")))
+        except (TypeError, ValueError):
+            return
+        self.journal.record_entry_fill(plan, filled_price=filled_price, source="trade_updates")
 
     def _record_exit_outcome(self, event: dict[str, Any]) -> None:
         """Finalize the no-trade shadow when a previously submitted close fills."""
@@ -160,10 +174,10 @@ class PaperTradeUpdateMonitor:
         filled_price = order.get("filled_avg_price")
         if entry_plan is None or filled_price is None:
             return
-        selected_net_pnl = round(
-            (abs(float(filled_price)) - entry_plan.limit_price) * 100 * entry_plan.qty,
-            2,
+        entry_debit = (
+            self.journal.entry_debit_for(entry_plan.client_order_id) or entry_plan.limit_price
         )
+        selected_net_pnl = round((abs(float(filled_price)) - entry_debit) * 100 * entry_plan.qty, 2)
         if self.journal.record_shadow_outcome(
             entry_plan.client_order_id,
             selected_net_pnl=selected_net_pnl,
