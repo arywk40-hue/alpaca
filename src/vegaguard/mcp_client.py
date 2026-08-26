@@ -1,6 +1,8 @@
 import json
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -29,10 +31,16 @@ class AlpacaMCPClient:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    @staticmethod
+    def _uvx_command() -> str:
+        """Prefer the current virtual environment's launcher over shell PATH."""
+        candidate = Path(sys.executable).with_name("uvx")
+        return str(candidate) if candidate.is_file() else "uvx"
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator[ClientSession]:
         parameters = StdioServerParameters(
-            command="uvx",
+            command=self._uvx_command(),
             args=["alpaca-mcp-server"],
             env=self.settings.mcp_environment(),
         )

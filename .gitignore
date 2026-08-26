@@ -4,6 +4,7 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+build/
 *.egg-info/
 *.py[cod]
 # Downloaded market data and generated research outputs are local artifacts.  Fixtures

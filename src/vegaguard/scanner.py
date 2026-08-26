@@ -100,6 +100,11 @@ class OpportunityScanner:
         snapshots: dict[str, dict],
         now: datetime,
     ) -> tuple[SignalInputs | None, list[str]]:
+        # An unavailable/empty provider response is a no-trade condition, not a crash.
+        daily = daily or []
+        intraday = intraday or []
+        market_daily = market_daily or []
+        snapshots = snapshots or {}
         daily_closes = [float(row["c"]) for row in daily if "c" in row]
         intraday_rows = sorted(
             [row for row in intraday if {"c", "h", "l", "v", "t"}.issubset(row)],

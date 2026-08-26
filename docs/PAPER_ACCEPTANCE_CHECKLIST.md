@@ -31,10 +31,10 @@ continuing. Do not loosen the MCP allowed-tool list in the app.
 
 ## 2. Read-only market-data proof
 
-Run the scanner twice during a market session, at least one fresh observation apart:
+Run two scans in one process during a market session, at least one fresh observation apart:
 
 ```bash
-vegaguard live read-only-cycle
+vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
 ```
 
 The first pass may correctly abstain because IV state needs a second snapshot. On a later pass,

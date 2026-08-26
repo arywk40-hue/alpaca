@@ -44,10 +44,20 @@ async def _fetch_history(args: argparse.Namespace) -> None:
     print(json.dumps(counts, indent=2))
 
 
-async def _read_only_cycle() -> None:
+async def _read_only_cycle(cycles: int = 1, interval_seconds: int = 900) -> None:
+    if cycles < 1:
+        raise ValueError("cycles must be at least one")
+    if cycles > 1 and interval_seconds < 60:
+        raise ValueError("interval must be at least 60 seconds")
     settings = get_settings()
     executor = PaperExecutionAgent(settings, DecisionJournal(), AlpacaMCPClient(settings))
-    print(json.dumps(await AutonomousCycle(settings, executor).run_read_only(), indent=2))
+    cycle = AutonomousCycle(settings, executor)
+    results = []
+    for number in range(cycles):
+        results.append(await cycle.run_read_only())
+        if number + 1 < cycles:
+            await asyncio.sleep(interval_seconds)
+    print(json.dumps(results[0] if cycles == 1 else {"cycles": results}, indent=2))
 
 
 async def _monitor_trade_updates() -> None:
@@ -101,9 +111,11 @@ def main() -> None:
 
     live_parser = subparsers.add_parser("live", help="Paper-account commands")
     live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
-    live_subparsers.add_parser(
+    read_only_parser = live_subparsers.add_parser(
         "read-only-cycle", help="Query paper account and market data; never invokes execution"
     )
+    read_only_parser.add_argument("--cycles", type=int, default=1)
+    read_only_parser.add_argument("--interval-seconds", type=int, default=900)
     live_subparsers.add_parser(
         "monitor-trade-updates", help="Journal paper trade updates; never submits an order"
     )
@@ -146,8 +158,8 @@ def main() -> None:
             parser.error(str(exc))
     if args.command == "live" and args.live_command == "read-only-cycle":
         try:
-            asyncio.run(_read_only_cycle())
-        except RuntimeError as exc:
+            asyncio.run(_read_only_cycle(args.cycles, args.interval_seconds))
+        except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
     if args.command == "live" and args.live_command == "monitor-trade-updates":
         try:

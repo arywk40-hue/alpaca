@@ -99,7 +99,13 @@ vegaguard live read-only-cycle
 ```
 
 The first scan correctly reports no trade because it needs a second fresh snapshot observation to
-form an IV state. Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
+form an IV state. During market hours, use a single long-lived, read-only process for that proof:
+
+```bash
+vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
+```
+
+Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -47,26 +48,50 @@ class AlpacaRESTClient:
         return data if isinstance(data, list) else []
 
     async def daily_bars(self, symbol: str, limit: int = 22) -> list[dict]:
+        now = datetime.now(UTC)
         data = await self._get(
             self.data_base_url,
             f"/v2/stocks/{symbol}/bars",
-            {"timeframe": "1Day", "limit": limit, "feed": "iex"},
+            {
+                "timeframe": "1Day",
+                "start": (now - timedelta(days=max(45, limit * 2))).isoformat(),
+                "end": now.isoformat(),
+                "limit": limit,
+                "feed": "iex",
+                "sort": "desc",
+            },
         )
-        bars = data.get("bars", [])
-        return bars.get(symbol, []) if isinstance(bars, dict) else bars
+        return list(reversed(self._bars_for_symbol(data, symbol)))
 
     async def intraday_bars(self, symbol: str, limit: int = 64) -> list[dict]:
+        now = datetime.now(UTC)
         data = await self._get(
             self.data_base_url,
             f"/v2/stocks/{symbol}/bars",
-            {"timeframe": "30Min", "limit": limit, "feed": "iex", "sort": "asc"},
+            {
+                "timeframe": "30Min",
+                "start": (now - timedelta(days=14)).isoformat(),
+                "end": now.isoformat(),
+                "limit": limit,
+                "feed": "iex",
+                "sort": "desc",
+            },
         )
-        bars = data.get("bars", [])
-        return bars.get(symbol, []) if isinstance(bars, dict) else bars
+        return list(reversed(self._bars_for_symbol(data, symbol)))
 
     async def option_snapshots(self, underlying: str) -> dict[str, dict]:
         data = await self._get(self.data_base_url, f"/v1beta1/options/snapshots/{underlying}")
-        return data.get("snapshots", {})
+        snapshots = data.get("snapshots")
+        return snapshots if isinstance(snapshots, dict) else {}
+
+    @staticmethod
+    def _bars_for_symbol(data: dict, symbol: str) -> list[dict]:
+        """Normalize Alpaca's list/map/null bar response shapes to a safe list."""
+        bars = data.get("bars")
+        if isinstance(bars, dict):
+            result = bars.get(symbol)
+            return result if isinstance(result, list) else []
+        return bars if isinstance(bars, list) else []
 
     async def market_snapshot(
         self, underlying: str
