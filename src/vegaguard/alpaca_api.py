@@ -80,7 +80,19 @@ class AlpacaRESTClient:
         return list(reversed(self._bars_for_symbol(data, symbol)))
 
     async def option_snapshots(self, underlying: str) -> dict[str, dict]:
-        data = await self._get(self.data_base_url, f"/v1beta1/options/snapshots/{underlying}")
+        today = datetime.now(UTC).date()
+        data = await self._get(
+            self.data_base_url,
+            f"/v1beta1/options/snapshots/{underlying}",
+            {
+                # Alpaca defaults this endpoint to near expiries. Request the
+                # same 14–28 DTE window that the defined-risk spread builder
+                # is permitted to trade.
+                "expiration_date_gte": (today + timedelta(days=self.settings.min_dte)).isoformat(),
+                "expiration_date_lte": (today + timedelta(days=self.settings.max_dte)).isoformat(),
+                "limit": 1000,
+            },
+        )
         snapshots = data.get("snapshots")
         return snapshots if isinstance(snapshots, dict) else {}
 
