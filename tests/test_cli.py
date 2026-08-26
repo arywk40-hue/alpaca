@@ -60,3 +60,20 @@ async def test_lifecycle_evidence_command_is_read_only(monkeypatch, capsys):
         "complete_trade_count": 1,
         "trades": [{"client_order_id": "vg-paper-1", "realized_pnl": 12.5}],
     }
+
+
+@pytest.mark.asyncio
+async def test_shadow_candidates_command_is_read_only(monkeypatch, capsys):
+    class FakeJournal:
+        def shadow_candidates(self, limit):
+            assert limit == 3
+            return [{"underlying": "IWM", "classification": "below_threshold"}]
+
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings())
+    monkeypatch.setattr(cli, "DecisionJournal", FakeJournal)
+    await cli._shadow_candidates(3)
+    assert json.loads(capsys.readouterr().out) == {
+        "mode": "read_only_shadow_candidates",
+        "paper_only": True,
+        "candidates": [{"underlying": "IWM", "classification": "below_threshold"}],
+    }

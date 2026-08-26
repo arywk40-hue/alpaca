@@ -31,6 +31,12 @@ vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
 
 The output includes the selected spread, legs, quantity, debit, maximum loss/profit, breakeven, guardian exits, risk approval, and the exact MCP payload. Review it before any further change.
 
+Every market-hours scheduler cycle also persists a shadow-candidate record for each ETF. It records below-threshold and rejected candidates with real data/quote timestamps without altering the live threshold or submitting an order:
+
+```bash
+vegaguard live shadow-candidates --limit 20
+```
+
 Actual paper submission requires the operator to deliberately set both `ALLOW_ORDER_EXECUTION=true` and `DRY_RUN=false`. Never use live keys. Monitor submitted paper trades and view audit/P&L information with:
 
 ```bash

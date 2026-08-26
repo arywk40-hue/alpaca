@@ -67,12 +67,31 @@ def test_shadow_ledger_is_immutable_and_dashboard_reads_it(tmp_path):
     )
     state = dashboard_state(journal)
     assert state["summary"] == {
+        "shadow_candidate_count": 0,
         "shadow_trade_count": 1,
         "completed_shadow_audits": 1,
         "selected_minus_shadow_pnl": 40.0,
         "open_position_unrealized_pnl": 0,
     }
     assert state["shadows"][0]["regime"] == "bullish"
+
+
+def test_dashboard_exposes_shadow_candidate_ledger(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    journal.record_shadow_candidate(
+        underlying="SPY",
+        classification="below_threshold",
+        score=65,
+        regime="neutral",
+        data_timestamp=None,
+        reasons=["score threshold"],
+        quote_timestamps=["2026-08-26T15:30:00+00:00"],
+        spread={"debit": 1.2},
+    )
+    state = dashboard_state(journal)
+    assert state["summary"]["shadow_candidate_count"] == 1
+    assert state["shadow_candidates"][0]["classification"] == "below_threshold"
+    assert "reasons_json" not in state["shadow_candidates"][0]
 
 
 def test_dashboard_reports_the_latest_open_position_mark(tmp_path):

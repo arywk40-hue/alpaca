@@ -36,6 +36,7 @@ class ScanResult:
     spread: DebitSpread | None
     reasons: tuple[str, ...]
     data_timestamp: datetime | None = None
+    shadow_spread: DebitSpread | None = None
 
 
 class IVObservationStore(Protocol):
@@ -77,9 +78,31 @@ class OpportunityScanner:
         if inputs is None:
             return ScanResult(underlying, None, None, None, tuple(input_reasons), data_timestamp)
         score = score_signal(inputs)
-        if score.regime not in {Regime.BULLISH, Regime.BEARISH}:
-            return ScanResult(underlying, score, None, None, score.reasons, data_timestamp)
         candidates = self._option_candidates(underlying, inputs.price, snapshots, now)
+        shadow_regime = (
+            score.regime
+            if score.regime in {Regime.BULLISH, Regime.BEARISH}
+            else Regime.BULLISH
+            if score.score > 0
+            else Regime.BEARISH
+            if score.score < 0
+            else None
+        )
+        shadow_spread = (
+            build_debit_spread(
+                candidates,
+                shadow_regime,
+                min_dte=self.settings.min_dte,
+                max_dte=self.settings.max_dte,
+                max_leg_spread_pct=self.settings.max_bid_ask_spread_pct,
+            )
+            if shadow_regime is not None
+            else None
+        )
+        if score.regime not in {Regime.BULLISH, Regime.BEARISH}:
+            return ScanResult(
+                underlying, score, None, None, score.reasons, data_timestamp, shadow_spread
+            )
         if not candidates:
             return ScanResult(
                 underlying,
@@ -89,13 +112,7 @@ class OpportunityScanner:
                 ("illiquid_options",),
                 data_timestamp,
             )
-        spread = build_debit_spread(
-            candidates,
-            score.regime,
-            min_dte=self.settings.min_dte,
-            max_dte=self.settings.max_dte,
-            max_leg_spread_pct=self.settings.max_bid_ask_spread_pct,
-        )
+        spread = shadow_spread
         if spread is None:
             return ScanResult(
                 underlying,
@@ -373,6 +390,7 @@ class OpportunityScanner:
                 iv_source=iv_source,
                 delta=float(delta),
                 underlying_price=underlying_price,
+                quote_timestamp=self._parse_timestamp(str(quote_timestamp)).isoformat(),
             )
             if (
                 self.settings.min_dte <= dte <= self.settings.max_dte

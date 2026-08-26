@@ -154,6 +154,8 @@ class AutonomousCycle:
                 "paper_only": self.settings.alpaca_paper_trade,
             }
         scans = [await self.scanner.scan(underlying) for underlying in self.settings.universe]
+        for scan in scans:
+            self._record_shadow_candidate(scan)
         candidates = [
             (scan, scan.spread.max_loss_per_contract)
             for scan in scans
@@ -312,15 +314,60 @@ class AutonomousCycle:
             "reasons": list(scan.reasons),
         }
         if scan.spread:
-            payload["spread"] = {
-                "long_symbol": scan.spread.long_leg.symbol,
-                "short_symbol": scan.spread.short_leg.symbol,
-                "debit": scan.spread.debit,
-                "width": scan.spread.width,
-                "max_loss_per_contract": scan.spread.max_loss_per_contract,
-                "iv_source": scan.spread.long_leg.iv_source,
-            }
+            payload["spread"] = AutonomousCycle._spread_payload(scan.spread)
+        if scan.shadow_spread and scan.shadow_spread != scan.spread:
+            payload["shadow_candidate"] = AutonomousCycle._spread_payload(scan.shadow_spread)
         return payload
+
+    def _record_shadow_candidate(self, scan: ScanResult) -> None:
+        spread = scan.shadow_spread or scan.spread
+        if scan.score is None:
+            classification = "data_unavailable"
+            reasons = list(scan.reasons)
+        elif scan.score.regime.value == "neutral":
+            classification = "below_threshold" if scan.score.score else "directionless"
+            reasons = list(scan.score.reasons)
+        elif spread is None:
+            classification = "rejected_spread"
+            reasons = list(scan.reasons)
+        else:
+            classification = "qualifying_candidate"
+            reasons = []
+        quote_timestamps = (
+            [
+                timestamp
+                for timestamp in (
+                    spread.long_leg.quote_timestamp,
+                    spread.short_leg.quote_timestamp,
+                )
+                if timestamp
+            ]
+            if spread
+            else []
+        )
+        self.executor.journal.record_shadow_candidate(
+            underlying=scan.underlying,
+            classification=classification,
+            score=scan.score.score if scan.score else None,
+            regime=scan.score.regime.value if scan.score else "no_trade",
+            data_timestamp=scan.data_timestamp,
+            reasons=reasons,
+            quote_timestamps=quote_timestamps,
+            spread=self._spread_payload(spread) if spread else None,
+        )
+
+    @staticmethod
+    def _spread_payload(spread) -> dict[str, Any]:
+        return {
+            "long_symbol": spread.long_leg.symbol,
+            "short_symbol": spread.short_leg.symbol,
+            "debit": spread.debit,
+            "width": spread.width,
+            "max_loss_per_contract": spread.max_loss_per_contract,
+            "iv_source": spread.long_leg.iv_source,
+            "long_quote_timestamp": spread.long_leg.quote_timestamp,
+            "short_quote_timestamp": spread.short_leg.quote_timestamp,
+        }
 
     @staticmethod
     def _order_preview(scan: ScanResult, plan: TradePlan, gate) -> dict[str, Any]:

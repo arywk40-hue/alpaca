@@ -84,6 +84,20 @@ async def _lifecycle_evidence() -> None:
     )
 
 
+async def _shadow_candidates(limit: int) -> None:
+    settings = get_settings()
+    print(
+        json.dumps(
+            {
+                "mode": "read_only_shadow_candidates",
+                "paper_only": settings.alpaca_paper_trade,
+                "candidates": DecisionJournal().shadow_candidates(limit),
+            },
+            indent=2,
+        )
+    )
+
+
 async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     settings = get_settings()
     journal = DecisionJournal()
@@ -139,6 +153,10 @@ def main() -> None:
     live_subparsers.add_parser(
         "lifecycle-evidence", help="Read journaled filled-and-exited paper trade evidence"
     )
+    shadow_candidates_parser = live_subparsers.add_parser(
+        "shadow-candidates", help="Read below-threshold and rejected candidate ledger"
+    )
+    shadow_candidates_parser.add_argument("--limit", type=int, default=20)
     scheduler_parser = live_subparsers.add_parser(
         "run-scheduler", help="Run the paper-only cycle every N seconds during market hours"
     )
@@ -193,6 +211,8 @@ def main() -> None:
             parser.error(str(exc))
     if args.command == "live" and args.live_command == "lifecycle-evidence":
         asyncio.run(_lifecycle_evidence())
+    if args.command == "live" and args.live_command == "shadow-candidates":
+        asyncio.run(_shadow_candidates(args.limit))
     if args.command == "live" and args.live_command == "run-scheduler":
         try:
             asyncio.run(_run_scheduler(args.interval_seconds, args.max_cycles))

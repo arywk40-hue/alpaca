@@ -60,6 +60,20 @@ class PaperLedger:
                     source TEXT NOT NULL DEFAULT 'official',
                     freshness_seconds REAL
                 );
+                CREATE TABLE IF NOT EXISTS shadow_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    observed_at TEXT NOT NULL,
+                    underlying TEXT NOT NULL,
+                    classification TEXT NOT NULL,
+                    score INTEGER,
+                    regime TEXT NOT NULL,
+                    data_timestamp TEXT,
+                    reasons_json TEXT NOT NULL,
+                    quote_timestamps_json TEXT NOT NULL,
+                    spread_json TEXT
+                );
+                CREATE INDEX IF NOT EXISTS shadow_candidates_observed_idx
+                    ON shadow_candidates(observed_at);
                 """
             )
             columns = {
@@ -157,6 +171,59 @@ class PaperLedger:
                 **dict(row),
                 "selected_plan": json.loads(row["selected_plan_json"]),
                 "shadow_plan": json.loads(row["shadow_plan_json"]),
+            }
+            for row in rows
+        ]
+
+    def record_shadow_candidate(
+        self,
+        *,
+        observed_at: datetime,
+        underlying: str,
+        classification: str,
+        score: int | None,
+        regime: str,
+        data_timestamp: str | None,
+        reasons: list[str],
+        quote_timestamps: list[str],
+        spread: dict[str, Any] | None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO shadow_candidates(
+                    observed_at, underlying, classification, score, regime, data_timestamp,
+                    reasons_json, quote_timestamps_json, spread_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observed_at.astimezone(UTC).isoformat(),
+                    underlying,
+                    classification,
+                    score,
+                    regime,
+                    data_timestamp,
+                    json.dumps(reasons, separators=(",", ":")),
+                    json.dumps(quote_timestamps, separators=(",", ":")),
+                    json.dumps(spread, separators=(",", ":")) if spread is not None else None,
+                ),
+            )
+
+    def shadow_candidates(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM shadow_candidates ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [
+            {
+                **{
+                    key: value
+                    for key, value in dict(row).items()
+                    if key not in {"reasons_json", "quote_timestamps_json", "spread_json"}
+                },
+                "reasons": json.loads(row["reasons_json"]),
+                "quote_timestamps": json.loads(row["quote_timestamps_json"]),
+                "spread": json.loads(row["spread_json"]) if row["spread_json"] else None,
             }
             for row in rows
         ]

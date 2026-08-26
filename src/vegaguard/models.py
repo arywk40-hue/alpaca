@@ -37,6 +37,7 @@ class OptionCandidate(BaseModel):
     iv_source: str = Field(default="official", pattern="^(official|quote_derived)$")
     delta: float | None = None
     underlying_price: float = Field(gt=0)
+    quote_timestamp: str | None = None
 
     @property
     def midpoint(self) -> float:

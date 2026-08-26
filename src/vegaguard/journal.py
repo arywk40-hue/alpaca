@@ -32,7 +32,7 @@ class DecisionJournal:
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if entry.get("plan", {}).get("client_order_id") == client_order_id:
+            if (entry.get("plan") or {}).get("client_order_id") == client_order_id:
                 return True
         return False
 
@@ -56,6 +56,35 @@ class DecisionJournal:
 
     def shadows(self, limit: int = 20) -> list[dict]:
         return self.ledger.shadows(limit)
+
+    def record_shadow_candidate(
+        self,
+        *,
+        underlying: str,
+        classification: str,
+        score: int | None,
+        regime: str,
+        data_timestamp: datetime | None,
+        reasons: list[str],
+        quote_timestamps: list[str],
+        spread: dict | None,
+    ) -> None:
+        observed_at = datetime.now(UTC)
+        payload = {
+            "underlying": underlying,
+            "classification": classification,
+            "score": score,
+            "regime": regime,
+            "data_timestamp": data_timestamp.isoformat() if data_timestamp else None,
+            "reasons": reasons,
+            "quote_timestamps": quote_timestamps,
+            "spread": spread,
+        }
+        self.ledger.record_shadow_candidate(observed_at=observed_at, **payload)
+        self.append(JournalEntry(timestamp=observed_at, event="shadow_candidate", payload=payload))
+
+    def shadow_candidates(self, limit: int = 20) -> list[dict]:
+        return self.ledger.shadow_candidates(limit)
 
     def plan_for_client_order_id(self, client_order_id: str) -> TradePlan | None:
         """Recover the immutable original plan needed to close a filled spread."""

@@ -22,3 +22,16 @@ vegaguard strategy compare-scorers \
 ```
 
 The report includes trade count, net P&L after costs, win rate, profit factor, maximum drawdown, rejection reasons, and regime distribution. It explicitly marks missing normalized historical option data as no out-of-sample assessment. Do not promote the experimental scorer to live use without a separate, statistically meaningful point-in-time historical result and an execution-risk review.
+
+## Shadow-candidate ledger
+
+The production baseline scorer records every market-hours decision in the local shadow-candidate ledger, including directionless/no-data decisions, below-threshold directional candidates, rejected spreads, and qualifying candidates. Each record has its observed/data timestamps, explicit reasons, and—when a hypothetical defined-risk spread exists—the two real option-quote timestamps and conservative spread economics. This is evidence gathering only: it does not lower the 70-point threshold and cannot submit an order.
+
+```bash
+# Run a bounded shadow cycle. DRY_RUN means no MCP order call.
+ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
+  vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
+
+# Inspect the durable records or dashboard state.
+vegaguard live shadow-candidates --limit 20
+```

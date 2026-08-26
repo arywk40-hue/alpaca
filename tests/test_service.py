@@ -33,6 +33,7 @@ def _scan() -> ScanResult:
         delta=0.46,
         implied_volatility=0.2,
         underlying_price=640,
+        quote_timestamp="2026-08-26T15:30:00+00:00",
     )
     short_leg = OptionCandidate(
         underlying="SPY",
@@ -46,6 +47,7 @@ def _scan() -> ScanResult:
         delta=0.24,
         implied_volatility=0.2,
         underlying_price=640,
+        quote_timestamp="2026-08-26T15:30:01+00:00",
     )
     score = SignalScore(100, Regime.BULLISH, 25, 25, 20, 15, 15, 5, ())
     spread = DebitSpread(Regime.BULLISH, long_leg, short_leg, 1.3, 5, 130, 10)
@@ -113,6 +115,30 @@ def test_serialized_scan_distinguishes_missing_data_from_neutral_signal():
     missing_payload = AutonomousCycle._serialize_scan(missing)
     assert missing_payload["regime"] == "no_trade"
     assert missing_payload["confidence"] is None
+
+
+def test_shadow_candidate_ledger_records_below_threshold_spread_with_quote_times(tmp_path):
+    settings = Settings()
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    cycle = AutonomousCycle(settings, PaperExecutionAgent(settings, journal, NoCallMCP()))
+    source = _scan()
+    neutral = ScanResult(
+        "SPY",
+        SignalScore(-65, Regime.NEUTRAL, -25, -25, 0, 0, -15, 3, ("weak",)),
+        None,
+        None,
+        ("weak",),
+        shadow_spread=source.spread,
+    )
+    cycle._record_shadow_candidate(neutral)
+    candidate = journal.shadow_candidates()[0]
+    assert candidate["classification"] == "below_threshold"
+    assert candidate["score"] == -65
+    assert candidate["quote_timestamps"] == [
+        "2026-08-26T15:30:00+00:00",
+        "2026-08-26T15:30:01+00:00",
+    ]
+    assert candidate["spread"]["debit"] == 1.3
 
 
 @pytest.mark.asyncio
