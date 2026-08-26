@@ -194,7 +194,7 @@ class HistoricalBacktester:
                     continue
                 observations += 1
                 decision = score_signal(feature)
-                if decision.regime == Regime.NO_TRADE:
+                if decision.regime not in {Regime.BULLISH, Regime.BEARISH}:
                     no_trade += 1
                     rejected.append(
                         RejectedOpportunity(

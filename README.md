@@ -2,7 +2,7 @@
 
 VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Trading Agents Hackathon. It does not ask an LLM to freely trade. Instead it makes the work auditable:
 
-`opportunity scanner → LLM thesis → deterministic risk gate → Alpaca MCP option order → order monitor → journal`
+`opportunity scanner → options validation → local/optional OpenAI thesis → deterministic risk gate → Alpaca MCP option order → position guardian → journal`
 
 ## Why this meets the brief
 
@@ -171,6 +171,10 @@ without ever enabling live trading.
 
 ## Build documents
 
+- [Architecture](docs/ARCHITECTURE.md)
+- [Strategy and risk rules](docs/STRATEGY.md)
+- [Operator runbook](docs/OPERATOR_RUNBOOK.md)
+- [Hackathon demo](docs/HACKATHON_DEMO.md)
 - [Master Alpaca hackathon reference](docs/ALPACA_HACKATHON_MASTER.md)
 - [P&L trading strategy](docs/TRADING_STRATEGY.md)
 - [Architecture and implementation plan](docs/ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md)

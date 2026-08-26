@@ -56,10 +56,22 @@ class PaperLedger:
                 CREATE TABLE IF NOT EXISTS iv_observations (
                     underlying TEXT PRIMARY KEY,
                     observed_at TEXT NOT NULL,
-                    implied_volatility REAL NOT NULL
+                    implied_volatility REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'official',
+                    freshness_seconds REAL
                 );
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(iv_observations)").fetchall()
+            }
+            if "source" not in columns:
+                connection.execute(
+                    "ALTER TABLE iv_observations ADD COLUMN source TEXT NOT NULL DEFAULT 'official'"
+                )
+            if "freshness_seconds" not in columns:
+                connection.execute("ALTER TABLE iv_observations ADD COLUMN freshness_seconds REAL")
 
     def append_event(self, entry: Any) -> None:
         payload = entry.model_dump(mode="json")
@@ -174,18 +186,27 @@ class PaperLedger:
         return observed_at, float(row["implied_volatility"])
 
     def record_iv_observation(
-        self, underlying: str, observed_at: datetime, implied_volatility: float
+        self,
+        underlying: str,
+        observed_at: datetime,
+        implied_volatility: float,
+        *,
+        source: str,
+        freshness_seconds: float | None,
     ) -> None:
         timestamp = observed_at.astimezone(UTC).isoformat()
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO iv_observations(underlying, observed_at, implied_volatility)
-                VALUES (?, ?, ?)
+                INSERT INTO iv_observations(
+                    underlying, observed_at, implied_volatility, source, freshness_seconds
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(underlying) DO UPDATE SET
                     observed_at = excluded.observed_at,
-                    implied_volatility = excluded.implied_volatility
+                    implied_volatility = excluded.implied_volatility,
+                    source = excluded.source,
+                    freshness_seconds = excluded.freshness_seconds
                 WHERE excluded.observed_at >= iv_observations.observed_at
                 """,
-                (underlying, timestamp, implied_volatility),
+                (underlying, timestamp, implied_volatility, source, freshness_seconds),
             )

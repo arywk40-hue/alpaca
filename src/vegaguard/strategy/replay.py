@@ -33,7 +33,7 @@ def run_replay(observations: list[ReplayObservation]) -> ReplayResult:
     for item in ordered:
         decision = score_signal(item.inputs)
         decisions.append(decision)
-        if decision.regime.value == "no_trade":
+        if decision.regime.value not in {"bullish", "bearish"}:
             continue
         if item.entry_debit is None or item.exit_value is None:
             continue
@@ -72,7 +72,9 @@ def write_report(
 ) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    no_trade_count = sum(decision.regime.value == "no_trade" for decision in result.decisions)
+    no_trade_count = sum(
+        decision.regime.value not in {"bullish", "bearish"} for decision in result.decisions
+    )
     payload = {
         "data_source": data_source,
         "observations": len(result.decisions),

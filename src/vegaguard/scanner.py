@@ -35,13 +35,20 @@ class ScanResult:
     opportunity: Opportunity | None
     spread: DebitSpread | None
     reasons: tuple[str, ...]
+    data_timestamp: datetime | None = None
 
 
 class IVObservationStore(Protocol):
     def latest_iv_observation(self, underlying: str) -> tuple[datetime, float] | None: ...
 
     def record_iv_observation(
-        self, underlying: str, observed_at: datetime, implied_volatility: float
+        self,
+        underlying: str,
+        observed_at: datetime,
+        implied_volatility: float,
+        *,
+        source: str,
+        freshness_seconds: float | None,
     ) -> None: ...
 
 
@@ -63,14 +70,15 @@ class OpportunityScanner:
     async def scan(self, underlying: str) -> ScanResult:
         daily, intraday, market_daily, snapshots = await self.alpaca.market_snapshot(underlying)
         now = datetime.now(UTC)
+        data_timestamp = self._latest_data_timestamp(intraday or [], snapshots or {})
         inputs, input_reasons = self._signal_inputs(
             underlying, daily, intraday, market_daily, snapshots, now
         )
         if inputs is None:
-            return ScanResult(underlying, None, None, None, tuple(input_reasons))
+            return ScanResult(underlying, None, None, None, tuple(input_reasons), data_timestamp)
         score = score_signal(inputs)
-        if score.regime == Regime.NO_TRADE:
-            return ScanResult(underlying, score, None, None, score.reasons)
+        if score.regime not in {Regime.BULLISH, Regime.BEARISH}:
+            return ScanResult(underlying, score, None, None, score.reasons, data_timestamp)
         candidates = self._option_candidates(underlying, inputs.price, snapshots, now)
         if not candidates:
             return ScanResult(
@@ -78,7 +86,8 @@ class OpportunityScanner:
                 score,
                 None,
                 None,
-                ("no fresh liquid contracts with Greeks were available",),
+                ("illiquid_options",),
+                data_timestamp,
             )
         spread = build_debit_spread(
             candidates,
@@ -89,7 +98,12 @@ class OpportunityScanner:
         )
         if spread is None:
             return ScanResult(
-                underlying, score, None, None, ("no valid defined-risk debit spread was available",)
+                underlying,
+                score,
+                None,
+                None,
+                ("invalid_defined_risk_spread",),
+                data_timestamp,
             )
         opportunity = Opportunity(
             candidate=spread.long_leg,
@@ -106,7 +120,7 @@ class OpportunityScanner:
                 f"conservative spread debit: {spread.debit:.2f}",
             ],
         )
-        return ScanResult(underlying, score, opportunity, spread, ())
+        return ScanResult(underlying, score, opportunity, spread, (), data_timestamp)
 
     def _signal_inputs(
         self,
@@ -131,23 +145,24 @@ class OpportunityScanner:
         market_closes = [float(row["c"]) for row in market_daily if "c" in row]
         reasons: list[str] = []
         if len(daily_closes) < 22:
-            reasons.append("insufficient completed daily bars")
+            reasons.append("insufficient_daily_bars")
         if len(intraday_rows) < 21:
-            reasons.append("insufficient completed 30-minute bars")
+            reasons.append("insufficient_intraday_bars")
         if len(market_closes) < 2:
-            reasons.append("insufficient SPY market-alignment bars")
+            reasons.append("insufficient_market_alignment_bars")
         iv_values = self._iv_values(
             snapshots,
             underlying_price=intraday_closes[-1] if intraday_closes else None,
             now=now,
         )
+        previous = self._previous_iv(underlying)
         iv = self._current_iv(underlying, snapshots, now, values=iv_values) if iv_values else None
         if not iv_values:
-            reasons.append(
-                "option snapshots contained no IV/Greeks or fresh solvable quote-derived IV"
-            )
+            reasons.append("stale_iv" if self._has_stale_iv(snapshots, now) else "missing_iv")
+        elif previous is not None and now - previous[0] > timedelta(hours=8):
+            reasons.append("stale_iv")
         elif iv is None:
-            reasons.append("implied-volatility state requires two fresh scanner observations")
+            reasons.append("insufficient_iv_history")
         if reasons:
             return None, reasons
         assert iv is not None
@@ -158,7 +173,7 @@ class OpportunityScanner:
             and self._parse_timestamp(str(row["t"])) + timedelta(minutes=30) <= now
         ]
         if not session:
-            return None, ["no completed intraday bars in the current session"]
+            return None, ["no_completed_session_bars"]
         return (
             SignalInputs(
                 price=intraday_closes[-1],
@@ -194,12 +209,18 @@ class OpportunityScanner:
         if not values:
             return None
         current = sorted(values)[len(values) // 2]
-        previous = self._iv_history.get(underlying)
-        if previous is None and self.iv_store is not None:
-            previous = self.iv_store.latest_iv_observation(underlying)
+        previous = self._previous_iv(underlying)
         self._iv_history[underlying] = (now, current)
         if self.iv_store is not None:
-            self.iv_store.record_iv_observation(underlying, now, current)
+            latest_quote = self._latest_data_timestamp([], snapshots)
+            freshness = (now - latest_quote).total_seconds() if latest_quote else None
+            self.iv_store.record_iv_observation(
+                underlying,
+                now,
+                current,
+                source=self._iv_source(snapshots),
+                freshness_seconds=round(freshness, 3) if freshness is not None else None,
+            )
         if previous is None or now - previous[0] > timedelta(hours=8):
             return None
         return current, previous[1]
@@ -215,6 +236,17 @@ class OpportunityScanner:
         for symbol, snapshot in snapshots.items():
             value = snapshot.get("impliedVolatility", snapshot.get("implied_volatility"))
             if value is not None:
+                quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
+                timestamp = quote.get("t") or quote.get("timestamp")
+                if now is not None:
+                    try:
+                        is_fresh = bool(timestamp) and now - self._parse_timestamp(
+                            str(timestamp)
+                        ) <= timedelta(minutes=15)
+                    except ValueError:
+                        is_fresh = False
+                    if not is_fresh:
+                        continue
                 try:
                     values.append(float(value))
                     continue
@@ -226,6 +258,36 @@ class OpportunityScanner:
             if derived is not None:
                 values.append(derived)
         return values
+
+    def _previous_iv(self, underlying: str) -> tuple[datetime, float] | None:
+        previous = self._iv_history.get(underlying)
+        if previous is None and self.iv_store is not None:
+            previous = self.iv_store.latest_iv_observation(underlying)
+        return previous
+
+    @staticmethod
+    def _iv_source(snapshots: dict[str, dict]) -> str:
+        return (
+            "official"
+            if any(
+                snapshot.get("impliedVolatility", snapshot.get("implied_volatility")) is not None
+                for snapshot in snapshots.values()
+            )
+            else "quote_derived"
+        )
+
+    def _has_stale_iv(self, snapshots: dict[str, dict], now: datetime) -> bool:
+        for snapshot in snapshots.values():
+            quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
+            timestamp = quote.get("t") or quote.get("timestamp")
+            if not timestamp:
+                continue
+            try:
+                if now - self._parse_timestamp(str(timestamp)) > timedelta(minutes=15):
+                    return True
+            except ValueError:
+                continue
+        return False
 
     def _quote_derived_iv(
         self, symbol: str, snapshot: dict, underlying_price: float, now: datetime
@@ -325,3 +387,23 @@ class OpportunityScanner:
         return (
             timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
         )
+
+    def _latest_data_timestamp(
+        self, intraday: list[dict], snapshots: dict[str, dict]
+    ) -> datetime | None:
+        timestamps: list[datetime] = []
+        for row in intraday:
+            if row.get("t"):
+                try:
+                    timestamps.append(self._parse_timestamp(str(row["t"])))
+                except ValueError:
+                    continue
+        for snapshot in snapshots.values():
+            quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
+            timestamp = quote.get("t") or quote.get("timestamp")
+            if timestamp:
+                try:
+                    timestamps.append(self._parse_timestamp(str(timestamp)))
+                except ValueError:
+                    continue
+        return max(timestamps, default=None)

@@ -180,7 +180,7 @@ class AutonomousCycle:
                 regime=selected.score.regime.value if selected.score else "unknown",
             )
         result = await self.executor.submit(plan, gate)
-        return {
+        payload = {
             "underlying": selected.underlying,
             "scan": self._serialize_scan(selected),
             "reviews": [review.__dict__ for review in reviews],
@@ -188,6 +188,9 @@ class AutonomousCycle:
             "gate": gate.model_dump(),
             "result": result,
         }
+        if result["status"] in {"dry_run", "observe_only"}:
+            payload["order_preview"] = self._order_preview(selected, plan, gate)
+        return payload
 
     async def _account_state(self) -> tuple[dict, dict, list[dict]]:
         account, clock, positions = (
@@ -278,6 +281,8 @@ class AutonomousCycle:
             "underlying": scan.underlying,
             "score": scan.score.score if scan.score else None,
             "regime": scan.score.regime.value if scan.score else "no_trade",
+            "confidence": round(abs(scan.score.score) / 100, 2) if scan.score else None,
+            "data_timestamp": scan.data_timestamp.isoformat() if scan.data_timestamp else None,
             "reasons": list(scan.reasons),
         }
         if scan.spread:
@@ -290,3 +295,34 @@ class AutonomousCycle:
                 "iv_source": scan.spread.long_leg.iv_source,
             }
         return payload
+
+    @staticmethod
+    def _order_preview(scan: ScanResult, plan: TradePlan, gate) -> dict[str, Any]:
+        """Expose the complete dry-run decision without creating an order."""
+        assert scan.spread is not None
+        spread = scan.spread
+        debit = plan.limit_price
+        max_profit = round((spread.width - debit) * 100 * plan.qty, 2)
+        breakeven = round(
+            spread.long_leg.strike + debit
+            if spread.regime.value == "bullish"
+            else spread.long_leg.strike - debit,
+            4,
+        )
+        return {
+            "selected_symbol": plan.underlying,
+            "strategy": "bull_call_debit_spread"
+            if spread.regime.value == "bullish"
+            else "bear_put_debit_spread",
+            "option_legs": [leg.model_dump(mode="json") for leg in plan.legs],
+            "quantity": plan.qty,
+            "entry_debit": debit,
+            "maximum_loss": plan.max_loss_usd,
+            "maximum_profit": max_profit,
+            "breakeven": breakeven,
+            "stop_loss_exit_value": round(debit * 0.65, 4),
+            "profit_target_exit_value": round(debit * 1.5, 4),
+            "expiration": spread.long_leg.expiration,
+            "risk_approval": gate.model_dump(),
+            "mcp_payload": plan.mcp_arguments(),
+        }

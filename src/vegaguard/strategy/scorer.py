@@ -5,6 +5,9 @@ from enum import StrEnum
 class Regime(StrEnum):
     BULLISH = "bullish"
     BEARISH = "bearish"
+    # Inputs may be complete yet not point to a trade.  This is distinct from
+    # NO_TRADE, which the live scanner reserves for unavailable/stale data.
+    NEUTRAL = "neutral"
     NO_TRADE = "no_trade"
 
 
@@ -95,7 +98,7 @@ def score_signal(inputs: SignalInputs, threshold: int = 70) -> SignalScore:
     elif total <= -threshold and agreeing >= 3:
         regime = Regime.BEARISH
     else:
-        regime = Regime.NO_TRADE
+        regime = Regime.NEUTRAL
         reasons.append("score or agreement threshold was not met")
 
     return SignalScore(

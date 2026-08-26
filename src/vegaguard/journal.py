@@ -86,14 +86,31 @@ class DecisionJournal:
         return self.ledger.latest_iv_observation(underlying)
 
     def record_iv_observation(
-        self, underlying: str, observed_at: datetime, implied_volatility: float
+        self,
+        underlying: str,
+        observed_at: datetime,
+        implied_volatility: float,
+        *,
+        source: str = "official",
+        freshness_seconds: float | None = None,
     ) -> None:
         timestamp = observed_at.astimezone(UTC)
-        self.ledger.record_iv_observation(underlying, timestamp, implied_volatility)
+        self.ledger.record_iv_observation(
+            underlying,
+            timestamp,
+            implied_volatility,
+            source=source,
+            freshness_seconds=freshness_seconds,
+        )
         self.append(
             JournalEntry(
                 timestamp=timestamp,
                 event="iv_observation",
-                payload={"underlying": underlying, "implied_volatility": implied_volatility},
+                payload={
+                    "underlying": underlying,
+                    "implied_volatility": implied_volatility,
+                    "source": source,
+                    "freshness_seconds": freshness_seconds,
+                },
             )
         )

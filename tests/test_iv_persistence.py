@@ -21,6 +21,12 @@ def test_iv_observation_survives_a_new_scanner_process_within_freshness_window(t
     first = OpportunityScanner(Settings(), object(), iv_store=journal)
     assert first._current_iv("SPY", _snapshots(now), now) is None
     assert journal.latest_iv_observation("SPY") == (now, 0.2)
+    assert journal.latest()[0]["payload"] == {
+        "underlying": "SPY",
+        "implied_volatility": 0.2,
+        "source": "official",
+        "freshness_seconds": 0.0,
+    }
 
     second = OpportunityScanner(Settings(), object(), iv_store=journal)
     observed = second._current_iv(

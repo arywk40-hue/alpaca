@@ -34,7 +34,7 @@ def test_live_scanner_requires_prior_iv_observation_then_builds_same_bull_spread
     }
     first, reasons = scanner._signal_inputs("SPY", daily, intraday, daily, snapshots, now)
     assert first is None
-    assert "implied-volatility state" in reasons[0]
+    assert reasons == ["insufficient_iv_history"]
     inputs, reasons = scanner._signal_inputs("SPY", daily, intraday, daily, snapshots, now)
     assert reasons == []
     assert inputs is not None
@@ -70,8 +70,8 @@ def test_live_scanner_reports_unavailable_greeks_as_data_limitation_not_missing_
         now,
     )
     assert inputs is None
-    assert "option snapshots contained no IV/Greeks or fresh solvable quote-derived IV" in reasons
-    assert not any("two fresh" in reason for reason in reasons)
+    assert "missing_iv" in reasons
+    assert "insufficient_iv_history" not in reasons
 
 
 def test_live_scanner_derives_iv_and_delta_from_fresh_observed_option_quotes():
@@ -96,5 +96,35 @@ def test_live_scanner_treats_empty_provider_responses_as_a_no_trade_not_an_error
         "SPY", [], [], [], {}, datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
     )
     assert inputs is None
-    assert "insufficient completed daily bars" in reasons
-    assert "insufficient completed 30-minute bars" in reasons
+    assert "insufficient_daily_bars" in reasons
+    assert "insufficient_intraday_bars" in reasons
+
+
+def test_live_scanner_labels_stale_option_iv_explicitly():
+    now = datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
+    scanner = OpportunityScanner(Settings(), alpaca=object())
+    daily = [{"c": 500 + index} for index in range(25)]
+    intraday = [
+        {
+            "t": (now - timedelta(minutes=30 * (25 - index))).isoformat(),
+            "c": 540 + index,
+            "h": 540.2 + index,
+            "l": 539.8 + index,
+            "v": 100,
+        }
+        for index in range(25)
+    ]
+    _, reasons = scanner._signal_inputs(
+        "SPY",
+        daily,
+        intraday,
+        daily,
+        {
+            "SPY260918C00560000": {
+                "latestQuote": {"t": (now - timedelta(minutes=16)).isoformat()},
+                "impliedVolatility": 0.2,
+            }
+        },
+        now,
+    )
+    assert "stale_iv" in reasons

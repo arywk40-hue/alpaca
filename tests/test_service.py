@@ -97,6 +97,22 @@ async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_pa
     result = await cycle.run_once()
     assert result["result"]["status"] == "dry_run"
     assert result["plan"]["strategy"] == "debit_spread"
+    assert result["order_preview"]["maximum_loss"] == 130
+    assert result["order_preview"]["maximum_profit"] == 370.0
+    assert result["order_preview"]["mcp_payload"]["order_class"] == "mleg"
+
+
+def test_serialized_scan_distinguishes_missing_data_from_neutral_signal():
+    scan = _scan()
+    payload = AutonomousCycle._serialize_scan(scan)
+    assert payload["regime"] == "bullish"
+    assert payload["confidence"] == 1.0
+    assert payload["data_timestamp"] is None
+
+    missing = ScanResult("SPY", None, None, None, ("missing_iv",))
+    missing_payload = AutonomousCycle._serialize_scan(missing)
+    assert missing_payload["regime"] == "no_trade"
+    assert missing_payload["confidence"] is None
 
 
 @pytest.mark.asyncio
