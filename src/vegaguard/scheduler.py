@@ -50,7 +50,11 @@ class MarketHoursScheduler:
                     outcome = {"entry_cycle": outcome, "lifecycle": lifecycle}
             except (HTTPError, OSError, RuntimeError, TimeoutError) as exc:
                 # Keep paper monitoring alive after a transient data/runtime failure.
-                outcome = {"status": "cycle_error", "reason": str(exc)}
+                outcome = {
+                    "status": "cycle_error",
+                    "error_type": type(exc).__name__,
+                    "reason": str(exc) or type(exc).__name__,
+                }
             outcomes.append(outcome)
             self.journal.append(JournalEntry(event="scheduled_cycle", payload=outcome))
             if max_cycles is None or len(outcomes) < max_cycles:

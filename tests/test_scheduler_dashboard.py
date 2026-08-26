@@ -111,6 +111,20 @@ async def test_scheduler_runs_bounded_cycles_and_journals_outcomes(tmp_path):
     assert [entry["event"] for entry in journal.latest()] == ["scheduled_cycle", "scheduled_cycle"]
 
 
+@pytest.mark.asyncio
+async def test_scheduler_preserves_an_empty_timeout_type_in_the_audit(tmp_path):
+    class TimeoutCycle:
+        async def run_once(self):
+            raise TimeoutError()
+
+    result = await MarketHoursScheduler(
+        TimeoutCycle(), DecisionJournal(tmp_path / "journal.jsonl"), interval_seconds=60
+    ).run(max_cycles=1)
+    assert result == [
+        {"status": "cycle_error", "error_type": "TimeoutError", "reason": "TimeoutError"}
+    ]
+
+
 def test_scheduler_refuses_an_overly_fast_loop(tmp_path):
     with pytest.raises(ValueError, match="at least 60"):
         MarketHoursScheduler(
