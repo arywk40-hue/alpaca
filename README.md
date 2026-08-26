@@ -136,6 +136,8 @@ The current implementation includes a shared live/replay deterministic scorer, d
 spread construction, a read-only Alpaca paper-data cycle, and a paper `trade_updates` monitor that
 journals lifecycle events and emits deterministic exit decisions. Credentials and recorded
 read-only output are still required to claim any Alpaca/OpenAI integration was externally verified.
+Use the [paper acceptance checklist](docs/PAPER_ACCEPTANCE_CHECKLIST.md) to produce that evidence
+without ever enabling live trading.
 
 ## Important controls
 
