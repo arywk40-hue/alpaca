@@ -21,3 +21,8 @@ def test_conflict_scorer_comparison_is_offline_and_reports_required_metrics():
             "max_drawdown",
             "costs",
         } <= set(result["performance"])
+    assert set(report["threshold_comparison"]) == {"40", "50", "60", "70"}
+    for threshold_report in report["threshold_comparison"].values():
+        assert {"trade_count", "performance", "regime_distribution", "rejection_reasons"} <= set(
+            threshold_report
+        )

@@ -12,6 +12,15 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
     shadows = journal.shadows(limit)
     candidates = journal.shadow_candidates(limit)
     completed = [shadow for shadow in shadows if shadow["closed_at"]]
+    exploration_shadows = [
+        shadow
+        for shadow in shadows
+        if shadow.get("trade_mode") == "exploration"
+        or shadow.get("selected_plan", {}).get("trade_mode") == "exploration"
+    ]
+    exploration_candidates = [
+        candidate for candidate in candidates if candidate.get("trade_mode") == "exploration"
+    ]
     events = journal.latest(max(limit, 200))
     latest_marks: dict[str, float] = {}
     for event in reversed(events):
@@ -29,6 +38,8 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
         "summary": {
             "shadow_trade_count": len(shadows),
             "shadow_candidate_count": len(candidates),
+            "exploration_trade_count": len(exploration_shadows),
+            "exploration_candidate_count": len(exploration_candidates),
             "completed_shadow_audits": len(completed),
             "selected_minus_shadow_pnl": round(
                 sum(
@@ -54,6 +65,6 @@ h1{{margin:0}} .sub{{color:#9fb0c9}} .grid{{display:grid;grid-template-columns:r
 <div id="cards" class="grid"></div><div class="grid"><section class="card"><h2>Shadow candidates</h2><pre id="candidates">Loading…</pre></section><section class="card"><h2>Shadow audit</h2><pre id="shadows">Loading…</pre></section>
 <section class="card"><h2>Journal timeline</h2><pre id="journal">Loading…</pre></section></div>
 <script>fetch('/dashboard/state').then(r=>r.json()).then(d=>{{
-document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Shadow candidates',d.summary.shadow_candidate_count],['Shadow trades',d.summary.shadow_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl],['Open unrealized P&L','$'+d.summary.open_position_unrealized_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
+document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Production candidates',d.summary.shadow_candidate_count-d.summary.exploration_candidate_count],['Exploration candidates',d.summary.exploration_candidate_count],['Production trades',d.summary.shadow_trade_count-d.summary.exploration_trade_count],['Exploration trades',d.summary.exploration_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl],['Open unrealized P&L','$'+d.summary.open_position_unrealized_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
 document.querySelector('#candidates').textContent=JSON.stringify(d.shadow_candidates,null,2);document.querySelector('#shadows').textContent=JSON.stringify(d.shadows,null,2);document.querySelector('#journal').textContent=JSON.stringify(d.journal,null,2);}}).catch(e=>document.body.append('Dashboard error: '+e));</script>
 </body></html>"""

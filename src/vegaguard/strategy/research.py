@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 from .replay import ReplayObservation, ReplayResult, run_replay
@@ -35,6 +36,7 @@ def compare_replay_scorers(observations: list[ReplayObservation]) -> dict[str, A
         "observations": len(observations),
         "baseline": _variant_report(baseline),
         "conflict_tolerant": _variant_report(conflict_tolerant),
+        "threshold_comparison": compare_score_thresholds(observations),
         "out_of_sample_assessment": "unavailable: no normalized historical option dataset was supplied",
         "limitations": [
             "The experimental scorer is not connected to the live scanner or execution path.",
@@ -42,3 +44,23 @@ def compare_replay_scorers(observations: list[ReplayObservation]) -> dict[str, A
             "Do not promote this scorer without a separate, point-in-time out-of-sample backtest.",
         ],
     }
+
+
+def compare_score_thresholds(
+    observations: list[ReplayObservation], thresholds: Iterable[int] = (40, 50, 60, 70)
+) -> dict[str, dict[str, Any]]:
+    """Replay the unchanged production scorer at explicit research thresholds.
+
+    This report is offline-only. It neither changes the live 70-point setting
+    nor recommends promotion from a small sample.
+    """
+    report: dict[str, dict[str, Any]] = {}
+    for threshold in thresholds:
+        if not 1 <= threshold <= 100:
+            raise ValueError("research thresholds must be between 1 and 100")
+        result = run_replay(
+            observations,
+            scorer=lambda inputs, threshold=threshold: score_signal(inputs, threshold=threshold),
+        )
+        report[str(threshold)] = _variant_report(result)
+    return report

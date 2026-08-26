@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5-mini"
     allow_order_execution: bool = False
     dry_run: bool = True
+    # Exploration is a separately-labelled, paper-only experiment. It cannot
+    # change the production scorer or its 70-point acceptance threshold.
+    exploration_mode: bool = False
+    exploration_score_threshold: int = Field(default=40, ge=1, lt=70)
     max_open_positions: int = Field(default=3, ge=1)
     max_contracts_per_trade: int = Field(default=1, ge=1)
     risk_fraction_per_trade: float = Field(default=0.005, gt=0, le=0.02)

@@ -121,6 +121,25 @@ Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
 
+### Paper-only exploration mode
+
+Production remains fixed at the baseline 70-point threshold. `EXPLORATION_MODE=false` is the default;
+when an operator explicitly enables it, the unchanged baseline score may be evaluated at
+`EXPLORATION_SCORE_THRESHOLD=40`. Exploration is separately labelled, permits only one whole-contract
+defined-risk debit spread with no other open position, and preserves every paper-account, fresh-quote,
+liquidity, IV, DTE, buying-power, maximum-loss, and risk gate. Start with dry run only:
+
+```bash
+EXPLORATION_MODE=true EXPLORATION_SCORE_THRESHOLD=40 \
+ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
+  vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
+```
+
+The journal and dashboard separate `exploration` from `production` records. They retain the score,
+threshold, candidate economics, quote timestamps, observed P&L, and rejection reasons; fields without
+an observed Alpaca value remain `null`. Exploration metrics for thresholds 40, 50, 60, and 70 appear in
+the offline `strategy compare-scorers` report. A trade never changes the production threshold.
+
 `OPENAI_API_KEY` is optional. When it is absent, VegaGuard uses a bounded deterministic thesis over
 the same validated opportunity; it cannot alter legs, size, or any deterministic risk rule.
 

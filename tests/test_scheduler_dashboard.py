@@ -68,7 +68,9 @@ def test_shadow_ledger_is_immutable_and_dashboard_reads_it(tmp_path):
     state = dashboard_state(journal)
     assert state["summary"] == {
         "shadow_candidate_count": 0,
+        "exploration_candidate_count": 0,
         "shadow_trade_count": 1,
+        "exploration_trade_count": 0,
         "completed_shadow_audits": 1,
         "selected_minus_shadow_pnl": 40.0,
         "open_position_unrealized_pnl": 0,
@@ -83,6 +85,8 @@ def test_dashboard_exposes_shadow_candidate_ledger(tmp_path):
         classification="below_threshold",
         score=65,
         regime="neutral",
+        score_threshold=40,
+        trade_mode="exploration",
         data_timestamp=None,
         reasons=["score threshold"],
         quote_timestamps=["2026-08-26T15:30:00+00:00"],
@@ -90,7 +94,9 @@ def test_dashboard_exposes_shadow_candidate_ledger(tmp_path):
     )
     state = dashboard_state(journal)
     assert state["summary"]["shadow_candidate_count"] == 1
+    assert state["summary"]["exploration_candidate_count"] == 1
     assert state["shadow_candidates"][0]["classification"] == "below_threshold"
+    assert state["shadow_candidates"][0]["trade_mode"] == "exploration"
     assert "reasons_json" not in state["shadow_candidates"][0]
 
 

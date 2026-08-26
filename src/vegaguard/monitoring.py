@@ -191,6 +191,8 @@ class PaperTradeUpdateMonitor:
                     payload={
                         "filled_price": abs(float(filled_price)),
                         "reason": "guardian_exit_fill",
+                        "costs_usd": None,
+                        "costs_status": "not_reported_by_alpaca",
                     },
                 )
             )
@@ -200,6 +202,10 @@ class PaperTradeUpdateMonitor:
                     payload={
                         "parent_client_order_id": entry_plan.client_order_id,
                         "selected_net_pnl": selected_net_pnl,
+                        "realized_pnl_before_costs": selected_net_pnl,
+                        "pnl_after_costs": None,
+                        "costs_usd": None,
+                        "costs_status": "not_reported_by_alpaca",
                         "shadow_net_pnl": 0.0,
                         "exit_filled_price": abs(float(filled_price)),
                     },

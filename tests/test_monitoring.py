@@ -137,6 +137,8 @@ def test_trade_update_uses_actual_entry_fill_for_realized_paper_pnl(tmp_path):
     assert len(evidence) == 1
     assert evidence[0]["client_order_id"] == entry.client_order_id
     assert evidence[0]["underlying"] == "SPY"
+    assert evidence[0]["trade_mode"] == "production"
+    assert evidence[0]["score_threshold"] == 70
     assert evidence[0]["strategy"] == "debit_spread"
     assert evidence[0]["quantity"] == 1
     assert evidence[0]["entry_filled_at"]

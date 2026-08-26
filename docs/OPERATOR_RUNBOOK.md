@@ -6,6 +6,8 @@ Use a dedicated Alpaca paper account and keep these defaults in `.env`:
 ALPACA_PAPER_TRADE=true
 ALLOW_ORDER_EXECUTION=false
 DRY_RUN=true
+EXPLORATION_MODE=false
+EXPLORATION_SCORE_THRESHOLD=40
 ```
 
 `OPENAI_API_KEY` is optional. Without it, a local deterministic bounded thesis is used.
@@ -36,6 +38,28 @@ Every market-hours scheduler cycle also persists a shadow-candidate record for e
 ```bash
 vegaguard live shadow-candidates --limit 20
 ```
+
+## Paper-only exploration mode
+
+Exploration is an opt-in, separately labelled paper experiment. It does not change the production
+baseline scorer or its 70-point threshold. With `EXPLORATION_MODE=true`, VegaGuard may consider a
+40-point-or-higher baseline score only after the existing fresh-quote, IV, liquidity, DTE, defined-risk
+spread, buying-power, maximum-loss, and paper-account gates pass. It permits exactly one whole-contract
+debit spread and refuses entry when any position is already open.
+
+Start with a preview only; `DRY_RUN=true` prevents every MCP order call:
+
+```bash
+EXPLORATION_MODE=true EXPLORATION_SCORE_THRESHOLD=40 \
+ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
+  vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
+```
+
+The journal and dashboard mark these records with `trade_mode: exploration`, the applicable score and
+threshold, conservative candidate/entry quote, real quote timestamps, and a rejection reason when there
+is no approved plan. Subsequent fill and position-mark events record observed exit quotes and P&L only
+when available; costs and post-cost P&L remain `null` when Alpaca has not reported them. Do not use a
+single exploration trade to alter the production threshold.
 
 Actual paper submission requires the operator to deliberately set both `ALLOW_ORDER_EXECUTION=true` and `DRY_RUN=false`. Never use live keys. Monitor submitted paper trades and view audit/P&L information with:
 

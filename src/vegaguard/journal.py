@@ -64,6 +64,8 @@ class DecisionJournal:
         classification: str,
         score: int | None,
         regime: str,
+        score_threshold: int,
+        trade_mode: str,
         data_timestamp: datetime | None,
         reasons: list[str],
         quote_timestamps: list[str],
@@ -75,6 +77,8 @@ class DecisionJournal:
             "classification": classification,
             "score": score,
             "regime": regime,
+            "score_threshold": score_threshold,
+            "trade_mode": trade_mode,
             "data_timestamp": data_timestamp.isoformat() if data_timestamp else None,
             "reasons": reasons,
             "quote_timestamps": quote_timestamps,
@@ -119,7 +123,12 @@ class DecisionJournal:
             JournalEntry(
                 event="position_entry_filled",
                 plan=plan,
-                payload={"filled_price": filled_price, "source": source},
+                payload={
+                    "filled_price": filled_price,
+                    "costs_usd": None,
+                    "costs_status": "not_reported_by_alpaca",
+                    "source": source,
+                },
             )
         )
         return True
@@ -182,6 +191,8 @@ class DecisionJournal:
                 {
                     "client_order_id": client_order_id,
                     "underlying": plan["underlying"],
+                    "trade_mode": plan.get("trade_mode", "production"),
+                    "score_threshold": plan.get("score_threshold", 70),
                     "strategy": plan["strategy"],
                     "quantity": plan["qty"],
                     "entry_filled_at": entry_fill["timestamp"],
@@ -189,6 +200,8 @@ class DecisionJournal:
                     "exit_filled_at": exit_fill["timestamp"],
                     "exit_credit": exit_fill["payload"]["filled_price"],
                     "exit_reason": exit_fill["payload"]["reason"],
+                    "costs_usd": None,
+                    "pnl_after_costs": None,
                     "realized_pnl": outcome["payload"]["selected_net_pnl"],
                 }
             )

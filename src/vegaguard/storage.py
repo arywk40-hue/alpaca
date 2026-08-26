@@ -44,6 +44,7 @@ class PaperLedger:
                     client_order_id TEXT PRIMARY KEY,
                     underlying TEXT NOT NULL,
                     regime TEXT NOT NULL,
+                    trade_mode TEXT NOT NULL DEFAULT 'production',
                     created_at TEXT NOT NULL,
                     selected_plan_json TEXT NOT NULL,
                     shadow_kind TEXT NOT NULL,
@@ -67,6 +68,8 @@ class PaperLedger:
                     classification TEXT NOT NULL,
                     score INTEGER,
                     regime TEXT NOT NULL,
+                    score_threshold INTEGER NOT NULL DEFAULT 70,
+                    trade_mode TEXT NOT NULL DEFAULT 'production',
                     data_timestamp TEXT,
                     reasons_json TEXT NOT NULL,
                     quote_timestamps_json TEXT NOT NULL,
@@ -86,6 +89,26 @@ class PaperLedger:
                 )
             if "freshness_seconds" not in columns:
                 connection.execute("ALTER TABLE iv_observations ADD COLUMN freshness_seconds REAL")
+            shadow_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(shadow_trades)").fetchall()
+            }
+            if "trade_mode" not in shadow_columns:
+                connection.execute(
+                    "ALTER TABLE shadow_trades ADD COLUMN trade_mode TEXT NOT NULL DEFAULT 'production'"
+                )
+            candidate_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(shadow_candidates)").fetchall()
+            }
+            if "score_threshold" not in candidate_columns:
+                connection.execute(
+                    "ALTER TABLE shadow_candidates ADD COLUMN score_threshold INTEGER NOT NULL DEFAULT 70"
+                )
+            if "trade_mode" not in candidate_columns:
+                connection.execute(
+                    "ALTER TABLE shadow_candidates ADD COLUMN trade_mode TEXT NOT NULL DEFAULT 'production'"
+                )
 
     def append_event(self, entry: Any) -> None:
         payload = entry.model_dump(mode="json")
@@ -119,14 +142,15 @@ class PaperLedger:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO shadow_trades(
-                    client_order_id, underlying, regime, created_at, selected_plan_json,
+                    client_order_id, underlying, regime, trade_mode, created_at, selected_plan_json,
                     shadow_kind, shadow_plan_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan.client_order_id,
                     plan.underlying,
                     regime,
+                    plan.trade_mode,
                     datetime.now(UTC).isoformat(),
                     json.dumps(selected, separators=(",", ":")),
                     shadow_kind,
@@ -183,6 +207,8 @@ class PaperLedger:
         classification: str,
         score: int | None,
         regime: str,
+        score_threshold: int,
+        trade_mode: str,
         data_timestamp: str | None,
         reasons: list[str],
         quote_timestamps: list[str],
@@ -192,9 +218,10 @@ class PaperLedger:
             connection.execute(
                 """
                 INSERT INTO shadow_candidates(
-                    observed_at, underlying, classification, score, regime, data_timestamp,
+                    observed_at, underlying, classification, score, regime, score_threshold, trade_mode,
+                    data_timestamp,
                     reasons_json, quote_timestamps_json, spread_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     observed_at.astimezone(UTC).isoformat(),
@@ -202,6 +229,8 @@ class PaperLedger:
                     classification,
                     score,
                     regime,
+                    score_threshold,
+                    trade_mode,
                     data_timestamp,
                     json.dumps(reasons, separators=(",", ":")),
                     json.dumps(quote_timestamps, separators=(",", ":")),

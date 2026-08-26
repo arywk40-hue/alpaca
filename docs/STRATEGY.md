@@ -23,6 +23,9 @@ vegaguard strategy compare-scorers \
 
 The report includes trade count, net P&L after costs, win rate, profit factor, maximum drawdown, rejection reasons, and regime distribution. It explicitly marks missing normalized historical option data as no out-of-sample assessment. Do not promote the experimental scorer to live use without a separate, statistically meaningful point-in-time historical result and an execution-risk review.
 
+The same offline report also compares the unchanged baseline scorer at thresholds 40, 50, 60, and 70.
+These metrics are exploratory only; they do not update the live production threshold.
+
 ## Shadow-candidate ledger
 
 The production baseline scorer records every market-hours decision in the local shadow-candidate ledger, including directionless/no-data decisions, below-threshold directional candidates, rejected spreads, and qualifying candidates. Each record has its observed/data timestamps, explicit reasons, and—when a hypothetical defined-risk spread exists—the two real option-quote timestamps and conservative spread economics. This is evidence gathering only: it does not lower the 70-point threshold and cannot submit an order.
@@ -35,3 +38,16 @@ ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
 # Inspect the durable records or dashboard state.
 vegaguard live shadow-candidates --limit 20
 ```
+
+## Paper-only exploration mode
+
+`EXPLORATION_MODE=false` is the default. When explicitly enabled with
+`EXPLORATION_SCORE_THRESHOLD=40`, it retains the baseline scorer but admits a directional 40-point score
+only after all production quote freshness, IV, liquidity, DTE, debit-spread, buying-power, position, and
+maximum-loss gates pass. Exploration can open one whole-contract defined-risk debit spread only and will
+not run while any position is open. Its plans and ledger records are labelled `exploration`; production
+plans stay labelled `production` and retain the 70-point threshold.
+
+Candidate records distinguish an executable conservative entry quote from a filled entry. Their
+entry/exit quote, costs, and P&L fields stay `null`; later fill and executable-exit-mark events add only
+the observed facts. No fee, fill, or P&L value is inferred.

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -100,6 +101,8 @@ class AutonomousCycle:
                         "entry_debit": entry_debit,
                         "executable_exit_credit": credit,
                         "unrealized_pnl": unrealized_pnl,
+                        "costs_usd": None,
+                        "pnl_after_costs": None,
                     },
                 )
             )
@@ -156,9 +159,16 @@ class AutonomousCycle:
         scans = [await self.scanner.scan(underlying) for underlying in self.settings.universe]
         for scan in scans:
             self._record_shadow_candidate(scan)
+        eligible_scans = self._eligible_scans(scans)
+        if self.settings.exploration_mode and positions:
+            return {
+                "status": "no_trade",
+                "reason": "exploration_open_position_limit",
+                "open_positions": len(positions),
+            }
         candidates = [
             (scan, scan.spread.max_loss_per_contract)
-            for scan in scans
+            for scan in eligible_scans
             if scan.spread is not None and scan.opportunity is not None
         ]
         aggregate_budget = (
@@ -170,7 +180,9 @@ class AutonomousCycle:
                 "status": "no_trade",
                 "reason": "no ETF passed deterministic scan and budget rules",
             }
-        selected = next(scan for scan in scans if scan.underlying == allocations[0].underlying)
+        selected = next(
+            scan for scan in eligible_scans if scan.underlying == allocations[0].underlying
+        )
         assert selected.spread is not None and selected.opportunity is not None
         reviews = [
             self.structure_agent.review(selected.spread),
@@ -220,6 +232,38 @@ class AutonomousCycle:
             payload["order_preview"] = self._order_preview(selected, plan, gate)
         return payload
 
+    def _eligible_scans(self, scans: list[ScanResult]) -> list[ScanResult]:
+        """Return production candidates or the opt-in exploration candidates.
+
+        Exploration deliberately reuses the baseline score and the production
+        spread builder. It only broadens the acceptance threshold after all
+        quote, liquidity, DTE, IV, and defined-risk checks have already passed.
+        """
+        if not self.settings.exploration_mode:
+            return [
+                scan for scan in scans if scan.spread is not None and scan.opportunity is not None
+            ]
+        eligible: list[ScanResult] = []
+        for scan in scans:
+            if (
+                scan.score is None
+                or abs(scan.score.score) < self.settings.exploration_score_threshold
+            ):
+                continue
+            if scan.spread is not None and scan.opportunity is not None:
+                eligible.append(scan)
+                continue
+            if scan.shadow_spread is not None and scan.shadow_opportunity is not None:
+                eligible.append(
+                    replace(
+                        scan,
+                        spread=scan.shadow_spread,
+                        opportunity=scan.shadow_opportunity,
+                        reasons=(),
+                    )
+                )
+        return eligible
+
     async def _account_state(self) -> tuple[dict, dict, list[dict]]:
         account, clock, positions = (
             await self.alpaca.account(),
@@ -253,8 +297,14 @@ class AutonomousCycle:
         )
         if quantity < 1:
             return None
+        if self.settings.exploration_mode:
+            quantity = 1
         return TradePlan(
             underlying=scan.underlying,
+            trade_mode="exploration" if self.settings.exploration_mode else "production",
+            score_threshold=(
+                self.settings.exploration_score_threshold if self.settings.exploration_mode else 70
+            ),
             strategy="debit_spread",
             legs=[
                 OptionLeg(
@@ -325,7 +375,16 @@ class AutonomousCycle:
             classification = "data_unavailable"
             reasons = list(scan.reasons)
         elif scan.score.regime.value == "neutral":
-            classification = "below_threshold" if scan.score.score else "directionless"
+            if not scan.score.score:
+                classification = "directionless"
+            elif (
+                self.settings.exploration_mode
+                and abs(scan.score.score) >= self.settings.exploration_score_threshold
+                and spread is not None
+            ):
+                classification = "exploration_eligible"
+            else:
+                classification = "below_threshold"
             reasons = list(scan.score.reasons)
         elif spread is None:
             classification = "rejected_spread"
@@ -350,6 +409,10 @@ class AutonomousCycle:
             classification=classification,
             score=scan.score.score if scan.score else None,
             regime=scan.score.regime.value if scan.score else "no_trade",
+            score_threshold=(
+                self.settings.exploration_score_threshold if self.settings.exploration_mode else 70
+            ),
+            trade_mode="exploration" if self.settings.exploration_mode else "production",
             data_timestamp=scan.data_timestamp,
             reasons=reasons,
             quote_timestamps=quote_timestamps,
@@ -367,6 +430,15 @@ class AutonomousCycle:
             "iv_source": spread.long_leg.iv_source,
             "long_quote_timestamp": spread.long_leg.quote_timestamp,
             "short_quote_timestamp": spread.short_leg.quote_timestamp,
+            "long_bid": spread.long_leg.bid,
+            "long_ask": spread.long_leg.ask,
+            "short_bid": spread.short_leg.bid,
+            "short_ask": spread.short_leg.ask,
+            # This is an executable quote estimate, not an actual fill.
+            "entry_quote": spread.debit,
+            "exit_quote": None,
+            "costs_usd": None,
+            "pnl_usd": None,
         }
 
     @staticmethod
@@ -383,6 +455,9 @@ class AutonomousCycle:
             4,
         )
         return {
+            "trade_mode": plan.trade_mode,
+            "score": scan.score.score if scan.score else None,
+            "score_threshold": plan.score_threshold,
             "selected_symbol": plan.underlying,
             "strategy": "bull_call_debit_spread"
             if spread.regime.value == "bullish"

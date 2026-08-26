@@ -63,6 +63,21 @@ def _scan() -> ScanResult:
     return ScanResult("SPY", score, opportunity, spread, ())
 
 
+def _score_40_exploration_scan() -> ScanResult:
+    source = _scan()
+    assert source.spread is not None and source.opportunity is not None
+    score = SignalScore(40, Regime.NEUTRAL, 25, 25, 0, 0, -10, 3, ("below 70",))
+    return ScanResult(
+        "SPY",
+        score,
+        None,
+        None,
+        score.reasons,
+        shadow_spread=source.spread,
+        shadow_opportunity=source.opportunity,
+    )
+
+
 def test_live_plan_uses_the_same_defined_risk_debit_spread_as_backtest():
     cycle = AutonomousCycle(Settings(), NoopExecutor())
     thesis = Thesis(
@@ -104,6 +119,93 @@ async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_pa
     assert result["order_preview"]["mcp_payload"]["order_class"] == "mleg"
 
 
+@pytest.mark.asyncio
+async def test_score_40_is_accepted_only_by_opt_in_exploration_dry_run(tmp_path, monkeypatch):
+    settings = Settings(
+        underlying_universe="SPY",
+        allow_order_execution=True,
+        dry_run=True,
+        exploration_mode=True,
+        exploration_score_threshold=40,
+    )
+    executor = PaperExecutionAgent(
+        settings, DecisionJournal(tmp_path / "journal.jsonl"), NoCallMCP()
+    )
+    cycle = AutonomousCycle(settings, executor)
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
+
+    async def scan(_underlying):
+        return _score_40_exploration_scan()
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    result = await cycle.run_once()
+    assert result["result"]["status"] == "dry_run"
+    assert result["plan"]["trade_mode"] == "exploration"
+    assert result["plan"]["score_threshold"] == 40
+    assert result["plan"]["qty"] == 1
+    assert result["order_preview"]["trade_mode"] == "exploration"
+    candidate = executor.journal.shadow_candidates()[0]
+    assert candidate["classification"] == "exploration_eligible"
+    assert candidate["trade_mode"] == "exploration"
+    assert candidate["score_threshold"] == 40
+    assert candidate["spread"]["entry_quote"] == 1.3
+    assert candidate["spread"]["pnl_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_score_40_is_rejected_by_unchanged_production_threshold(tmp_path, monkeypatch):
+    settings = Settings(underlying_universe="SPY", allow_order_execution=True, dry_run=True)
+    executor = PaperExecutionAgent(
+        settings, DecisionJournal(tmp_path / "journal.jsonl"), NoCallMCP()
+    )
+    cycle = AutonomousCycle(settings, executor)
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
+
+    async def scan(_underlying):
+        return _score_40_exploration_scan()
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    result = await cycle.run_once()
+    assert result == {
+        "status": "no_trade",
+        "reason": "no ETF passed deterministic scan and budget rules",
+    }
+    candidate = executor.journal.shadow_candidates()[0]
+    assert candidate["trade_mode"] == "production"
+    assert candidate["score_threshold"] == 70
+
+
+@pytest.mark.asyncio
+async def test_exploration_refuses_a_new_trade_when_any_position_is_open(tmp_path, monkeypatch):
+    settings = Settings(
+        underlying_universe="SPY", exploration_mode=True, allow_order_execution=True, dry_run=True
+    )
+    executor = PaperExecutionAgent(
+        settings, DecisionJournal(tmp_path / "journal.jsonl"), NoCallMCP()
+    )
+    cycle = AutonomousCycle(settings, executor)
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, [{"x": 1}]
+
+    async def scan(_underlying):
+        return _score_40_exploration_scan()
+
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+    assert await cycle.run_once() == {
+        "status": "no_trade",
+        "reason": "exploration_open_position_limit",
+        "open_positions": 1,
+    }
+
+
 def test_serialized_scan_distinguishes_missing_data_from_neutral_signal():
     scan = _scan()
     payload = AutonomousCycle._serialize_scan(scan)
@@ -139,6 +241,8 @@ def test_shadow_candidate_ledger_records_below_threshold_spread_with_quote_times
         "2026-08-26T15:30:01+00:00",
     ]
     assert candidate["spread"]["debit"] == 1.3
+    assert candidate["score_threshold"] == 70
+    assert candidate["trade_mode"] == "production"
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,7 @@ class ScanResult:
     reasons: tuple[str, ...]
     data_timestamp: datetime | None = None
     shadow_spread: DebitSpread | None = None
+    shadow_opportunity: Opportunity | None = None
 
 
 class IVObservationStore(Protocol):
@@ -99,9 +100,21 @@ class OpportunityScanner:
             if shadow_regime is not None
             else None
         )
+        shadow_opportunity = (
+            self._opportunity_from_spread(score, shadow_spread, daily, inputs)
+            if shadow_spread is not None
+            else None
+        )
         if score.regime not in {Regime.BULLISH, Regime.BEARISH}:
             return ScanResult(
-                underlying, score, None, None, score.reasons, data_timestamp, shadow_spread
+                underlying,
+                score,
+                None,
+                None,
+                score.reasons,
+                data_timestamp,
+                shadow_spread,
+                shadow_opportunity,
             )
         if not candidates:
             return ScanResult(
@@ -122,7 +135,23 @@ class OpportunityScanner:
                 ("invalid_defined_risk_spread",),
                 data_timestamp,
             )
-        opportunity = Opportunity(
+        opportunity = self._opportunity_from_spread(score, spread, daily, inputs)
+        assert opportunity is not None
+        return ScanResult(underlying, score, opportunity, spread, (), data_timestamp)
+
+    @staticmethod
+    def _opportunity_from_spread(
+        score: SignalScore,
+        spread: DebitSpread,
+        daily: list[dict],
+        inputs: SignalInputs,
+    ) -> Opportunity:
+        """Build a quote-backed candidate shared by production and exploration.
+
+        The caller only invokes this after the same DTE, liquidity, option-IV,
+        and defined-risk validation used by the production spread builder.
+        """
+        return Opportunity(
             candidate=spread.long_leg,
             return_1d_pct=percent_return([float(item["c"]) for item in daily], 1),
             return_5d_pct=inputs.return_5d_pct,
@@ -137,7 +166,6 @@ class OpportunityScanner:
                 f"conservative spread debit: {spread.debit:.2f}",
             ],
         )
-        return ScanResult(underlying, score, opportunity, spread, (), data_timestamp)
 
     def _signal_inputs(
         self,

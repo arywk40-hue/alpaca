@@ -23,13 +23,16 @@ class DeterministicRiskGate:
             reasons.append("thesis/candidate contract mismatch")
         if plan.qty > self.settings.max_contracts_per_trade:
             reasons.append("contract quantity exceeds configured limit")
+        if plan.trade_mode == "exploration" and plan.qty != 1:
+            reasons.append("exploration permits exactly one whole contract")
         if plan.max_loss_usd > self.settings.max_trade_risk_usd:
             reasons.append("maximum loss exceeds configured per-trade risk")
         if not self.settings.min_dte <= candidate.dte <= self.settings.max_dte:
             reasons.append("expiration falls outside configured DTE window")
         if candidate.spread_pct > self.settings.max_bid_ask_spread_pct:
             reasons.append("option bid-ask spread is too wide")
-        if open_positions >= self.settings.max_open_positions:
+        max_positions = 1 if plan.trade_mode == "exploration" else self.settings.max_open_positions
+        if open_positions >= max_positions:
             reasons.append("maximum open positions reached")
         if buying_power < plan.max_loss_usd:
             reasons.append("insufficient buying power for defined maximum loss")

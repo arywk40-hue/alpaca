@@ -66,6 +66,8 @@ class Thesis(BaseModel):
 
 class TradePlan(BaseModel):
     underlying: str
+    trade_mode: str = Field(default="production", pattern="^(production|exploration)$")
+    score_threshold: int = Field(default=70, ge=1, le=100)
     strategy: str = Field(pattern="^(single_leg|debit_spread)$")
     legs: list[OptionLeg] = Field(min_length=1, max_length=2)
     qty: int = Field(default=1, ge=1)
@@ -80,6 +82,8 @@ class TradePlan(BaseModel):
 
     @model_validator(mode="after")
     def plan_shape_is_consistent(self):
+        if self.trade_mode == "production" and self.score_threshold != 70:
+            raise ValueError("production plans must retain the 70-point threshold")
         if self.strategy == "single_leg" and len(self.legs) != 1:
             raise ValueError("single_leg plans need exactly one leg")
         if self.strategy == "debit_spread" and len(self.legs) != 2:
@@ -129,6 +133,8 @@ class TradePlan(BaseModel):
         }
         return TradePlan(
             underlying=self.underlying,
+            trade_mode=self.trade_mode,
+            score_threshold=self.score_threshold,
             strategy=self.strategy,
             legs=[
                 OptionLeg(
