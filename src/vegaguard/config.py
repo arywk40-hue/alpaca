@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,12 @@ class Settings(BaseSettings):
         if "min_dte" in info.data and value < info.data["min_dte"]:
             raise ValueError("MAX_DTE must be at least MIN_DTE")
         return value
+
+    @model_validator(mode="after")
+    def paper_mode_is_mandatory(self) -> "Settings":
+        if not self.alpaca_paper_trade:
+            raise ValueError("VegaGuard is permanently restricted to ALPACA_PAPER_TRADE=true")
+        return self
 
     def mcp_environment(self) -> dict[str, str]:
         if not self.alpaca_api_key or not self.alpaca_secret_key:

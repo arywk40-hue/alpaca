@@ -1,3 +1,5 @@
+import pytest
+
 from vegaguard.config import Settings
 from vegaguard.models import (
     OptionCandidate,
@@ -75,3 +77,8 @@ def test_blocks_single_leg_execution_even_when_other_rules_pass():
     )
     assert not result.approved
     assert "defined-risk debit spreads" in result.reasons[0]
+
+
+def test_settings_refuse_live_mode_before_any_client_can_initialize():
+    with pytest.raises(ValueError, match="permanently restricted"):
+        Settings(alpaca_paper_trade=False)
