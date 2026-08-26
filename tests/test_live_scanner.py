@@ -45,3 +45,30 @@ def test_live_scanner_requires_prior_iv_observation_then_builds_same_bull_spread
     assert spread is not None
     assert spread.long_leg.symbol == "SPY260918C00560000"
     assert spread.short_leg.symbol == "SPY260918C00565000"
+
+
+def test_live_scanner_reports_unavailable_greeks_as_data_limitation_not_missing_history():
+    now = datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
+    scanner = OpportunityScanner(Settings(), alpaca=object())
+    daily = [{"c": 500 + index} for index in range(25)]
+    intraday = [
+        {
+            "t": (now - timedelta(minutes=30 * (25 - index))).isoformat(),
+            "c": 540 + index,
+            "h": 540.2 + index,
+            "l": 539.8 + index,
+            "v": 100,
+        }
+        for index in range(25)
+    ]
+    inputs, reasons = scanner._signal_inputs(
+        "SPY",
+        daily,
+        intraday,
+        daily,
+        {"SPY260918C00560000": {"latestQuote": {}}},
+        now,
+    )
+    assert inputs is None
+    assert "option snapshots contained no implied volatility or Greeks" in reasons
+    assert not any("two fresh" in reason for reason in reasons)

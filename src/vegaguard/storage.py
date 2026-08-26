@@ -53,6 +53,11 @@ class PaperLedger:
                     shadow_net_pnl REAL,
                     close_reason TEXT
                 );
+                CREATE TABLE IF NOT EXISTS iv_observations (
+                    underlying TEXT PRIMARY KEY,
+                    observed_at TEXT NOT NULL,
+                    implied_volatility REAL NOT NULL
+                );
                 """
             )
 
@@ -147,3 +152,40 @@ class PaperLedger:
     def event_count(self) -> int:
         with self._connect() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+
+    def latest_iv_observation(self, underlying: str) -> tuple[datetime, float] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT observed_at, implied_volatility
+                  FROM iv_observations
+                 WHERE underlying = ?
+                """,
+                (underlying,),
+            ).fetchone()
+        if row is None:
+            return None
+        observed_at = datetime.fromisoformat(str(row["observed_at"]))
+        observed_at = (
+            observed_at.replace(tzinfo=UTC)
+            if observed_at.tzinfo is None
+            else observed_at.astimezone(UTC)
+        )
+        return observed_at, float(row["implied_volatility"])
+
+    def record_iv_observation(
+        self, underlying: str, observed_at: datetime, implied_volatility: float
+    ) -> None:
+        timestamp = observed_at.astimezone(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO iv_observations(underlying, observed_at, implied_volatility)
+                VALUES (?, ?, ?)
+                ON CONFLICT(underlying) DO UPDATE SET
+                    observed_at = excluded.observed_at,
+                    implied_volatility = excluded.implied_volatility
+                WHERE excluded.observed_at >= iv_observations.observed_at
+                """,
+                (underlying, timestamp, implied_volatility),
+            )

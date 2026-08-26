@@ -31,7 +31,7 @@ continuing. Do not loosen the MCP allowed-tool list in the app.
 
 ## 2. Read-only market-data proof
 
-Run two scans in one process during a market session, at least one fresh observation apart:
+Run two scans during a market session, at least one fresh observation apart:
 
 ```bash
 vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
@@ -39,6 +39,10 @@ vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
 
 The first pass may correctly abstain because IV state needs a second snapshot. On a later pass,
 each underlying must show either a typed opportunity/spread or an explicit no-trade reason.
+The first observation is written to the local journal and is valid for eight hours, so the second
+scan may be a new invocation or a second cycle in the same process.
+If the result says snapshots contain no implied volatility or Greeks, stop here: the account's
+current option-data entitlement cannot support this IV-filtered strategy and the agent must abstain.
 
 ## 3. Order-shape proof without an order
 

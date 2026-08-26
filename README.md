@@ -98,8 +98,9 @@ OpenAI, MCP, or any order endpoint:
 vegaguard live read-only-cycle
 ```
 
-The first scan correctly reports no trade because it needs a second fresh snapshot observation to
-form an IV state. During market hours, use a single long-lived, read-only process for that proof:
+The first scan correctly reports no trade when it has IV/Greeks but needs a second fresh snapshot
+observation to form an IV state. Each observation is journaled locally and remains valid for eight
+hours, so use either a single long-lived process or a later one-off run during that window:
 
 ```bash
 vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
@@ -108,6 +109,11 @@ vegaguard live read-only-cycle --cycles 2 --interval-seconds 900
 Keep `ALLOW_ORDER_EXECUTION=false`; a live plan, if ever separately authorized,
 is a defined-risk bull-call or bear-put debit spread using the same scorer and spread builder as
 the backtester.
+
+If the scan instead says option snapshots contain no implied volatility or Greeks, the account's
+current option-data entitlement cannot support this IV-filtered strategy. VegaGuard will abstain;
+it does not estimate or invent Greeks. Use an Alpaca option-data entitlement/feed that supplies
+those fields before attempting paper-order acceptance.
 
 ### Autonomous scheduler and dashboard
 

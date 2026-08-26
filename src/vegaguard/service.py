@@ -24,7 +24,9 @@ class AutonomousCycle:
     def __init__(self, settings: Settings, executor: PaperExecutionAgent):
         self.settings = settings
         self.alpaca = AlpacaRESTClient(settings)
-        self.scanner = OpportunityScanner(settings, self.alpaca)
+        self.scanner = OpportunityScanner(
+            settings, self.alpaca, iv_store=getattr(executor, "journal", None)
+        )
         self.risk_gate = DeterministicRiskGate(settings)
         self.executor = executor
         self._thesis_agent: OpenAIThesisAgent | None = None

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .models import JournalEntry, TradePlan
@@ -80,3 +81,19 @@ class DecisionJournal:
             if plan.get("parent_client_order_id") == parent_client_order_id:
                 return True
         return False
+
+    def latest_iv_observation(self, underlying: str) -> tuple[datetime, float] | None:
+        return self.ledger.latest_iv_observation(underlying)
+
+    def record_iv_observation(
+        self, underlying: str, observed_at: datetime, implied_volatility: float
+    ) -> None:
+        timestamp = observed_at.astimezone(UTC)
+        self.ledger.record_iv_observation(underlying, timestamp, implied_volatility)
+        self.append(
+            JournalEntry(
+                timestamp=timestamp,
+                event="iv_observation",
+                payload={"underlying": underlying, "implied_volatility": implied_volatility},
+            )
+        )

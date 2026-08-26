@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Protocol
 
 from .alpaca_api import AlpacaRESTClient
 from .config import Settings
@@ -35,12 +36,27 @@ class ScanResult:
     reasons: tuple[str, ...]
 
 
+class IVObservationStore(Protocol):
+    def latest_iv_observation(self, underlying: str) -> tuple[datetime, float] | None: ...
+
+    def record_iv_observation(
+        self, underlying: str, observed_at: datetime, implied_volatility: float
+    ) -> None: ...
+
+
 class OpportunityScanner:
     """Read-only scanner that shares the backtest score and debit-spread builder."""
 
-    def __init__(self, settings: Settings, alpaca: AlpacaRESTClient):
+    def __init__(
+        self,
+        settings: Settings,
+        alpaca: AlpacaRESTClient,
+        *,
+        iv_store: IVObservationStore | None = None,
+    ):
         self.settings = settings
         self.alpaca = alpaca
+        self.iv_store = iv_store
         self._iv_history: dict[str, tuple[datetime, float]] = {}
 
     async def scan(self, underlying: str) -> ScanResult:
@@ -119,8 +135,11 @@ class OpportunityScanner:
             reasons.append("insufficient completed 30-minute bars")
         if len(market_closes) < 2:
             reasons.append("insufficient SPY market-alignment bars")
-        iv = self._current_iv(underlying, snapshots, now)
-        if iv is None:
+        iv_values = self._iv_values(snapshots)
+        iv = self._current_iv(underlying, snapshots, now) if iv_values else None
+        if not iv_values:
+            reasons.append("option snapshots contained no implied volatility or Greeks")
+        elif iv is None:
             reasons.append("implied-volatility state requires two fresh scanner observations")
         if reasons:
             return None, reasons
@@ -159,19 +178,32 @@ class OpportunityScanner:
     def _current_iv(
         self, underlying: str, snapshots: dict[str, dict], now: datetime
     ) -> tuple[float, float] | None:
-        values = [
-            float(snapshot["impliedVolatility"])
-            for snapshot in snapshots.values()
-            if snapshot.get("impliedVolatility") is not None
-        ]
+        values = self._iv_values(snapshots)
         if not values:
             return None
         current = sorted(values)[len(values) // 2]
         previous = self._iv_history.get(underlying)
+        if previous is None and self.iv_store is not None:
+            previous = self.iv_store.latest_iv_observation(underlying)
         self._iv_history[underlying] = (now, current)
+        if self.iv_store is not None:
+            self.iv_store.record_iv_observation(underlying, now, current)
         if previous is None or now - previous[0] > timedelta(hours=8):
             return None
         return current, previous[1]
+
+    @staticmethod
+    def _iv_values(snapshots: dict[str, dict]) -> list[float]:
+        values: list[float] = []
+        for snapshot in snapshots.values():
+            value = snapshot.get("impliedVolatility", snapshot.get("implied_volatility"))
+            if value is None:
+                continue
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return values
 
     def _option_candidates(
         self, underlying: str, underlying_price: float, snapshots: dict[str, dict], now: datetime
