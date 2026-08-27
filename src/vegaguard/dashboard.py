@@ -22,6 +22,20 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
         candidate for candidate in candidates if candidate.get("trade_mode") == "exploration"
     ]
     events = journal.latest(max(limit, 200))
+    acknowledged_order_ids = {
+        str((event.get("plan") or {}).get("client_order_id"))
+        for event in events
+        if event.get("event") == "order_submission_receipt"
+        and event.get("plan")
+        and not (event["plan"].get("parent_client_order_id"))
+    }
+    filled_trade_ids = {
+        str((event.get("plan") or {}).get("client_order_id"))
+        for event in events
+        if event.get("event") == "position_entry_filled"
+        and event.get("plan")
+        and not (event["plan"].get("parent_client_order_id"))
+    }
     latest_marks: dict[str, float] = {}
     for event in reversed(events):
         if event.get("event") != "position_mark":
@@ -36,10 +50,12 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
         "shadows": shadows,
         "shadow_candidates": candidates,
         "summary": {
-            "shadow_trade_count": len(shadows),
+            "approved_production_plan_count": len(shadows) - len(exploration_shadows),
+            "approved_exploration_plan_count": len(exploration_shadows),
             "shadow_candidate_count": len(candidates),
-            "exploration_trade_count": len(exploration_shadows),
             "exploration_candidate_count": len(exploration_candidates),
+            "acknowledged_paper_order_count": len(acknowledged_order_ids),
+            "filled_paper_trade_count": len(filled_trade_ids),
             "completed_shadow_audits": len(completed),
             "selected_minus_shadow_pnl": round(
                 sum(
@@ -65,6 +81,6 @@ h1{{margin:0}} .sub{{color:#9fb0c9}} .grid{{display:grid;grid-template-columns:r
 <div id="cards" class="grid"></div><div class="grid"><section class="card"><h2>Shadow candidates</h2><pre id="candidates">Loading…</pre></section><section class="card"><h2>Shadow audit</h2><pre id="shadows">Loading…</pre></section>
 <section class="card"><h2>Journal timeline</h2><pre id="journal">Loading…</pre></section></div>
 <script>fetch('/dashboard/state').then(r=>r.json()).then(d=>{{
-document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Production candidates',d.summary.shadow_candidate_count-d.summary.exploration_candidate_count],['Exploration candidates',d.summary.exploration_candidate_count],['Production trades',d.summary.shadow_trade_count-d.summary.exploration_trade_count],['Exploration trades',d.summary.exploration_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl],['Open unrealized P&L','$'+d.summary.open_position_unrealized_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
+document.querySelector('#cards').innerHTML=[['Audit events',d.event_count],['Production candidates',d.summary.shadow_candidate_count-d.summary.exploration_candidate_count],['Exploration candidates',d.summary.exploration_candidate_count],['Approved production plans',d.summary.approved_production_plan_count],['Approved exploration plans',d.summary.approved_exploration_plan_count],['Acknowledged paper orders',d.summary.acknowledged_paper_order_count],['Filled paper trades',d.summary.filled_paper_trade_count],['Completed audits',d.summary.completed_shadow_audits],['Selected − shadow P&L','$'+d.summary.selected_minus_shadow_pnl],['Open unrealized P&L','$'+d.summary.open_position_unrealized_pnl]].map(x=>`<div class="card"><div class="sub">${{x[0]}}</div><div class="n">${{x[1]}}</div></div>`).join('');
 document.querySelector('#candidates').textContent=JSON.stringify(d.shadow_candidates,null,2);document.querySelector('#shadows').textContent=JSON.stringify(d.shadows,null,2);document.querySelector('#journal').textContent=JSON.stringify(d.journal,null,2);}}).catch(e=>document.body.append('Dashboard error: '+e));</script>
 </body></html>"""

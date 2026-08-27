@@ -33,6 +33,18 @@ vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
 
 The output includes the selected spread, legs, quantity, debit, maximum loss/profit, breakeven, guardian exits, risk approval, and the exact MCP payload. Review it before any further change.
 
+Each approved dry run now includes a `plan_id`, both quote timestamps, and an `approval_expires_at` time
+five minutes later. Do not rerun the scheduler to submit it: that could choose different legs. After an
+operator explicitly approves that exact ID, with the monitor already running, submit it once using:
+
+```bash
+EXPLORATION_MODE=true ALLOW_ORDER_EXECUTION=true DRY_RUN=false \
+  vegaguard live submit-approved --plan-id vg-plan-REPLACE_WITH_REVIEWED_ID
+```
+
+The command reloads the immutable dry-run plan without scanning again, rejects an expired plan or a prior
+submission, and rechecks the current market, paper-account, buying-power, maximum-loss, and position gates.
+
 Every market-hours scheduler cycle also persists a shadow-candidate record for each ETF. It records below-threshold and rejected candidates with real data/quote timestamps without altering the live threshold or submitting an order:
 
 ```bash
@@ -60,6 +72,11 @@ threshold, conservative candidate/entry quote, real quote timestamps, and a reje
 is no approved plan. Subsequent fill and position-mark events record observed exit quotes and P&L only
 when available; costs and post-cost P&L remain `null` when Alpaca has not reported them. Do not use a
 single exploration trade to alter the production threshold.
+
+The dashboard calls a dry-run decision an **Approved exploration plan**, never a trade. Its paper-trade
+counters require an Alpaca acknowledgement or an observed fill. For an exploration-qualified direction,
+it shows a label such as `bullish_exploration` alongside `baseline_regime: neutral`; this distinguishes
+the unchanged 70-point production classification from the separately configured exploration threshold.
 
 Actual paper submission requires the operator to deliberately set both `ALLOW_ORDER_EXECUTION=true` and `DRY_RUN=false`. Never use live keys. Monitor submitted paper trades and view audit/P&L information with:
 

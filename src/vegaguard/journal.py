@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .models import JournalEntry, TradePlan
@@ -36,6 +36,48 @@ class DecisionJournal:
                 return True
         return False
 
+    def has_submitted_client_order_id(self, client_order_id: str) -> bool:
+        """A dry-run preview is not an Alpaca submission and may be approved later."""
+        return self._has_event("order_submission_intent", client_order_id) or self._has_event(
+            "order_submission_receipt", client_order_id
+        )
+
+    def approved_plan(self, plan_id: str, *, now: datetime | None = None) -> TradePlan:
+        """Recover one exact dry-run plan while its quote-bound approval is valid."""
+        if not self.path.exists():
+            raise ValueError("approved plan was not found")
+        for line in reversed(self.path.read_text(encoding="utf-8").splitlines()):
+            try:
+                entry = json.loads(line)
+                raw_plan = entry.get("plan")
+                if entry.get("event") != "dry_run_order" or not raw_plan:
+                    continue
+                plan = TradePlan.model_validate(raw_plan)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if plan.plan_id != plan_id:
+                continue
+            if not entry.get("gate", {}).get("approved"):
+                raise ValueError("approved plan failed its recorded risk gate")
+            if plan.approval_expires_at is None or len(plan.quote_timestamps) != 2:
+                raise ValueError("approved plan lacks a two-leg quote-bound expiry")
+            current = (now or datetime.now(UTC)).astimezone(UTC)
+            expires_at = plan.approval_expires_at.astimezone(UTC)
+            if current >= expires_at:
+                raise ValueError("approved plan has expired; run a fresh dry-run")
+            try:
+                quote_times = [
+                    datetime.fromisoformat(value).astimezone(UTC) for value in plan.quote_timestamps
+                ]
+            except ValueError as exc:
+                raise ValueError("approved plan has invalid quote timestamps") from exc
+            if any(current - quote_time > timedelta(minutes=5) for quote_time in quote_times):
+                raise ValueError("approved plan has stale quote timestamps; run a fresh dry-run")
+            if self.has_submitted_client_order_id(plan.client_order_id):
+                raise ValueError("approved plan was already submitted")
+            return plan
+        raise ValueError("approved plan was not found")
+
     def register_shadow(self, plan, *, regime: str, shadow_kind: str = "no_trade") -> bool:
         return self.ledger.register_shadow(plan, regime=regime, shadow_kind=shadow_kind)
 
@@ -64,6 +106,7 @@ class DecisionJournal:
         classification: str,
         score: int | None,
         regime: str,
+        baseline_regime: str,
         score_threshold: int,
         trade_mode: str,
         data_timestamp: datetime | None,
@@ -77,6 +120,7 @@ class DecisionJournal:
             "classification": classification,
             "score": score,
             "regime": regime,
+            "baseline_regime": baseline_regime,
             "score_threshold": score_threshold,
             "trade_mode": trade_mode,
             "data_timestamp": data_timestamp.isoformat() if data_timestamp else None,

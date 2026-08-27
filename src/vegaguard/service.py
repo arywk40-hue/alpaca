@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .alpaca_api import AlpacaRESTClient
@@ -217,7 +217,8 @@ class AutonomousCycle:
         if gate.approved:
             self.executor.journal.register_shadow(
                 plan,
-                regime=selected.score.regime.value if selected.score else "unknown",
+                regime=selected.execution_regime
+                or (selected.score.regime.value if selected.score else "unknown"),
             )
         result = await self.executor.submit(plan, gate)
         payload = {
@@ -251,7 +252,12 @@ class AutonomousCycle:
             ):
                 continue
             if scan.spread is not None and scan.opportunity is not None:
-                eligible.append(scan)
+                eligible.append(
+                    replace(
+                        scan,
+                        execution_regime=f"{scan.spread.regime.value}_exploration",
+                    )
+                )
                 continue
             if scan.shadow_spread is not None and scan.shadow_opportunity is not None:
                 eligible.append(
@@ -260,6 +266,7 @@ class AutonomousCycle:
                         spread=scan.shadow_spread,
                         opportunity=scan.shadow_opportunity,
                         reasons=(),
+                        execution_regime=f"{scan.shadow_spread.regime.value}_exploration",
                     )
                 )
         return eligible
@@ -323,7 +330,39 @@ class AutonomousCycle:
             max_loss_usd=spread.max_loss_per_contract * quantity,
             candidate=scan.opportunity.candidate,
             thesis=thesis,
+            approval_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            quote_timestamps=[
+                timestamp
+                for timestamp in (
+                    spread.long_leg.quote_timestamp,
+                    spread.short_leg.quote_timestamp,
+                )
+                if timestamp
+            ],
         )
+
+    async def submit_approved_plan(self, plan_id: str) -> dict[str, Any]:
+        """Submit the exact, unexpired plan previously produced by dry run.
+
+        This deliberately does not scan again: a later scanner pass could pick
+        different legs or a different debit. Current account/market gates are
+        re-evaluated immediately before the one permitted MCP submission.
+        """
+        plan = self.executor.journal.approved_plan(plan_id)
+        account, clock, positions = await self._account_state()
+        gate = self.risk_gate.assess(
+            plan,
+            market_open=bool(clock.get("is_open")),
+            open_positions=len(positions),
+            buying_power=float(account.get("buying_power", 0)),
+        )
+        result = await self.executor.submit_approved(plan, gate)
+        return {
+            "plan_id": plan.plan_id,
+            "plan": plan.model_dump(mode="json"),
+            "gate": gate.model_dump(),
+            "result": result,
+        }
 
     @staticmethod
     def _executable_exit_credit(plan: TradePlan, snapshots: dict[str, dict]) -> float | None:
@@ -358,11 +397,14 @@ class AutonomousCycle:
         payload: dict[str, Any] = {
             "underlying": scan.underlying,
             "score": scan.score.score if scan.score else None,
-            "regime": scan.score.regime.value if scan.score else "no_trade",
+            "regime": scan.execution_regime
+            or (scan.score.regime.value if scan.score else "no_trade"),
             "confidence": round(abs(scan.score.score) / 100, 2) if scan.score else None,
             "data_timestamp": scan.data_timestamp.isoformat() if scan.data_timestamp else None,
             "reasons": list(scan.reasons),
         }
+        if scan.execution_regime and scan.score:
+            payload["baseline_regime"] = scan.score.regime.value
         if scan.spread:
             payload["spread"] = AutonomousCycle._spread_payload(scan.spread)
         if scan.shadow_spread and scan.shadow_spread != scan.spread:
@@ -371,21 +413,28 @@ class AutonomousCycle:
 
     def _record_shadow_candidate(self, scan: ScanResult) -> None:
         spread = scan.shadow_spread or scan.spread
+        exploration_eligible = (
+            self.settings.exploration_mode
+            and scan.score is not None
+            and scan.score.regime.value == "neutral"
+            and abs(scan.score.score) >= self.settings.exploration_score_threshold
+            and spread is not None
+        )
         if scan.score is None:
             classification = "data_unavailable"
             reasons = list(scan.reasons)
         elif scan.score.regime.value == "neutral":
             if not scan.score.score:
                 classification = "directionless"
-            elif (
-                self.settings.exploration_mode
-                and abs(scan.score.score) >= self.settings.exploration_score_threshold
-                and spread is not None
-            ):
+            elif exploration_eligible:
                 classification = "exploration_eligible"
             else:
                 classification = "below_threshold"
-            reasons = list(scan.score.reasons)
+            reasons = (
+                self._exploration_reasons(scan)
+                if exploration_eligible
+                else list(scan.score.reasons)
+            )
         elif spread is None:
             classification = "rejected_spread"
             reasons = list(scan.reasons)
@@ -408,7 +457,14 @@ class AutonomousCycle:
             underlying=scan.underlying,
             classification=classification,
             score=scan.score.score if scan.score else None,
-            regime=scan.score.regime.value if scan.score else "no_trade",
+            regime=(
+                f"{spread.regime.value}_exploration"
+                if exploration_eligible and spread is not None
+                else scan.score.regime.value
+                if scan.score
+                else "no_trade"
+            ),
+            baseline_regime=scan.score.regime.value if scan.score else "no_trade",
             score_threshold=(
                 self.settings.exploration_score_threshold if self.settings.exploration_mode else 70
             ),
@@ -418,6 +474,24 @@ class AutonomousCycle:
             quote_timestamps=quote_timestamps,
             spread=self._spread_payload(spread) if spread else None,
         )
+
+    def _exploration_reasons(self, scan: ScanResult) -> list[str]:
+        assert scan.score is not None
+        production_threshold_reasons = {
+            "below 70",
+            "score or agreement threshold was not met",
+        }
+        retained = [
+            reason for reason in scan.score.reasons if reason not in production_threshold_reasons
+        ]
+        return [
+            *retained,
+            "production baseline remains neutral below its fixed 70-point threshold",
+            (
+                "exploration threshold "
+                f"{self.settings.exploration_score_threshold} accepted the quote-backed directional candidate"
+            ),
+        ]
 
     @staticmethod
     def _spread_payload(spread) -> dict[str, Any]:
@@ -455,6 +529,11 @@ class AutonomousCycle:
             4,
         )
         return {
+            "plan_id": plan.plan_id,
+            "approval_expires_at": (
+                plan.approval_expires_at.isoformat() if plan.approval_expires_at else None
+            ),
+            "quote_timestamps": plan.quote_timestamps,
             "trade_mode": plan.trade_mode,
             "score": scan.score.score if scan.score else None,
             "score_threshold": plan.score_threshold,

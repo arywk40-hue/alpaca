@@ -68,6 +68,7 @@ class PaperLedger:
                     classification TEXT NOT NULL,
                     score INTEGER,
                     regime TEXT NOT NULL,
+                    baseline_regime TEXT NOT NULL DEFAULT 'no_trade',
                     score_threshold INTEGER NOT NULL DEFAULT 70,
                     trade_mode TEXT NOT NULL DEFAULT 'production',
                     data_timestamp TEXT,
@@ -108,6 +109,10 @@ class PaperLedger:
             if "trade_mode" not in candidate_columns:
                 connection.execute(
                     "ALTER TABLE shadow_candidates ADD COLUMN trade_mode TEXT NOT NULL DEFAULT 'production'"
+                )
+            if "baseline_regime" not in candidate_columns:
+                connection.execute(
+                    "ALTER TABLE shadow_candidates ADD COLUMN baseline_regime TEXT NOT NULL DEFAULT 'no_trade'"
                 )
 
     def append_event(self, entry: Any) -> None:
@@ -207,6 +212,7 @@ class PaperLedger:
         classification: str,
         score: int | None,
         regime: str,
+        baseline_regime: str,
         score_threshold: int,
         trade_mode: str,
         data_timestamp: str | None,
@@ -218,10 +224,11 @@ class PaperLedger:
             connection.execute(
                 """
                 INSERT INTO shadow_candidates(
-                    observed_at, underlying, classification, score, regime, score_threshold, trade_mode,
+                    observed_at, underlying, classification, score, regime, baseline_regime,
+                    score_threshold, trade_mode,
                     data_timestamp,
                     reasons_json, quote_timestamps_json, spread_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     observed_at.astimezone(UTC).isoformat(),
@@ -229,6 +236,7 @@ class PaperLedger:
                     classification,
                     score,
                     regime,
+                    baseline_regime,
                     score_threshold,
                     trade_mode,
                     data_timestamp,

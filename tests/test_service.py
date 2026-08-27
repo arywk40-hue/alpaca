@@ -117,6 +117,9 @@ async def test_end_to_end_cycle_produces_dry_run_without_order_submission(tmp_pa
     assert result["order_preview"]["maximum_loss"] == 130
     assert result["order_preview"]["maximum_profit"] == 370.0
     assert result["order_preview"]["mcp_payload"]["order_class"] == "mleg"
+    assert result["order_preview"]["plan_id"].startswith("vg-plan-")
+    assert result["order_preview"]["approval_expires_at"]
+    assert len(result["order_preview"]["quote_timestamps"]) == 2
 
 
 @pytest.mark.asyncio
@@ -147,12 +150,20 @@ async def test_score_40_is_accepted_only_by_opt_in_exploration_dry_run(tmp_path,
     assert result["plan"]["score_threshold"] == 40
     assert result["plan"]["qty"] == 1
     assert result["order_preview"]["trade_mode"] == "exploration"
+    assert result["scan"]["regime"] == "bullish_exploration"
+    assert result["scan"]["baseline_regime"] == "neutral"
     candidate = executor.journal.shadow_candidates()[0]
     assert candidate["classification"] == "exploration_eligible"
+    assert candidate["regime"] == "bullish_exploration"
+    assert candidate["baseline_regime"] == "neutral"
     assert candidate["trade_mode"] == "exploration"
     assert candidate["score_threshold"] == 40
     assert candidate["spread"]["entry_quote"] == 1.3
     assert candidate["spread"]["pnl_usd"] is None
+    assert candidate["reasons"] == [
+        "production baseline remains neutral below its fixed 70-point threshold",
+        "exploration threshold 40 accepted the quote-backed directional candidate",
+    ]
 
 
 @pytest.mark.asyncio

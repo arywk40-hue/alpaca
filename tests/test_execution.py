@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from vegaguard.config import Settings
@@ -10,6 +12,15 @@ from vegaguard.risk import DeterministicRiskGate
 class NoCallMCP:
     async def call(self, *_args):
         raise AssertionError("dry-run execution must not call MCP")
+
+
+class CaptureMCP:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def call(self, tool: str, arguments: dict):
+        self.calls.append((tool, arguments))
+        return {"id": "paper-order-1", "status": "accepted"}
 
 
 def plan() -> TradePlan:
@@ -71,6 +82,60 @@ async def test_dry_run_is_journaled_and_duplicate_client_id_is_blocked(tmp_path)
     duplicate = await agent.submit(trade_plan, gate)
     assert duplicate == {"status": "blocked", "reasons": ["duplicate client_order_id"]}
     assert [entry["event"] for entry in journal.latest()] == ["dry_run_order", "gate_evaluated"]
+
+
+@pytest.mark.asyncio
+async def test_exact_unexpired_dry_run_plan_can_be_submitted_once(tmp_path):
+    dry_settings = Settings(allow_order_execution=True, dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    trade_plan = plan().model_copy(
+        update={
+            "approval_expires_at": datetime.now(UTC) + timedelta(minutes=5),
+            "quote_timestamps": [
+                datetime.now(UTC).isoformat(),
+                datetime.now(UTC).isoformat(),
+            ],
+        }
+    )
+    dry_gate = DeterministicRiskGate(dry_settings).assess(
+        trade_plan, market_open=True, open_positions=0, buying_power=10_000
+    )
+    assert (
+        await PaperExecutionAgent(dry_settings, journal, NoCallMCP()).submit(trade_plan, dry_gate)
+    )["status"] == "dry_run"
+
+    recovered = journal.approved_plan(trade_plan.plan_id)
+    assert recovered.model_dump(mode="json") == trade_plan.model_dump(mode="json")
+    live_settings = Settings(allow_order_execution=True, dry_run=False)
+    live_gate = DeterministicRiskGate(live_settings).assess(
+        recovered, market_open=True, open_positions=0, buying_power=10_000
+    )
+    mcp = CaptureMCP()
+    result = await PaperExecutionAgent(live_settings, journal, mcp).submit_approved(
+        recovered, live_gate
+    )
+    assert result["status"] == "submitted"
+    assert mcp.calls == [("place_option_order", trade_plan.mcp_arguments())]
+    with pytest.raises(ValueError, match="already submitted"):
+        journal.approved_plan(trade_plan.plan_id)
+
+
+@pytest.mark.asyncio
+async def test_expired_dry_run_plan_cannot_be_recovered_for_submission(tmp_path):
+    settings = Settings(allow_order_execution=True, dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    trade_plan = plan().model_copy(
+        update={
+            "approval_expires_at": datetime.now(UTC) - timedelta(seconds=1),
+            "quote_timestamps": [datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()],
+        }
+    )
+    gate = DeterministicRiskGate(settings).assess(
+        trade_plan, market_open=True, open_positions=0, buying_power=10_000
+    )
+    await PaperExecutionAgent(settings, journal, NoCallMCP()).submit(trade_plan, gate)
+    with pytest.raises(ValueError, match="has expired"):
+        journal.approved_plan(trade_plan.plan_id)
 
 
 @pytest.mark.asyncio

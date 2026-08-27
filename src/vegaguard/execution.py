@@ -11,7 +11,18 @@ class PaperExecutionAgent:
         self.mcp = mcp
 
     async def submit(self, plan: TradePlan, gate: GateResult) -> dict:
-        if self.journal.has_client_order_id(plan.client_order_id):
+        return await self._submit(plan, gate, allow_dry_run_approval=False)
+
+    async def submit_approved(self, plan: TradePlan, gate: GateResult) -> dict:
+        """Submit a previously reviewed dry-run plan exactly once."""
+        return await self._submit(plan, gate, allow_dry_run_approval=True)
+
+    async def _submit(
+        self, plan: TradePlan, gate: GateResult, *, allow_dry_run_approval: bool
+    ) -> dict:
+        if self.journal.has_submitted_client_order_id(plan.client_order_id) or (
+            not allow_dry_run_approval and self.journal.has_client_order_id(plan.client_order_id)
+        ):
             return {"status": "blocked", "reasons": ["duplicate client_order_id"]}
         self.journal.append(JournalEntry(event="gate_evaluated", plan=plan, gate=gate))
         if not gate.approved:

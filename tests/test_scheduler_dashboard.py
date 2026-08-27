@@ -1,6 +1,6 @@
 import pytest
 
-from vegaguard.dashboard import dashboard_state
+from vegaguard.dashboard import dashboard_html, dashboard_state
 from vegaguard.journal import DecisionJournal
 from vegaguard.models import (
     JournalEntry,
@@ -69,8 +69,10 @@ def test_shadow_ledger_is_immutable_and_dashboard_reads_it(tmp_path):
     assert state["summary"] == {
         "shadow_candidate_count": 0,
         "exploration_candidate_count": 0,
-        "shadow_trade_count": 1,
-        "exploration_trade_count": 0,
+        "approved_production_plan_count": 1,
+        "approved_exploration_plan_count": 0,
+        "acknowledged_paper_order_count": 0,
+        "filled_paper_trade_count": 0,
         "completed_shadow_audits": 1,
         "selected_minus_shadow_pnl": 40.0,
         "open_position_unrealized_pnl": 0,
@@ -85,6 +87,7 @@ def test_dashboard_exposes_shadow_candidate_ledger(tmp_path):
         classification="below_threshold",
         score=65,
         regime="neutral",
+        baseline_regime="neutral",
         score_threshold=40,
         trade_mode="exploration",
         data_timestamp=None,
@@ -98,6 +101,25 @@ def test_dashboard_exposes_shadow_candidate_ledger(tmp_path):
     assert state["shadow_candidates"][0]["classification"] == "below_threshold"
     assert state["shadow_candidates"][0]["trade_mode"] == "exploration"
     assert "reasons_json" not in state["shadow_candidates"][0]
+
+
+def test_dashboard_distinguishes_approved_plans_from_actual_paper_trades(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    exploration_plan = _plan().model_copy(
+        update={"trade_mode": "exploration", "score_threshold": 40}
+    )
+    assert journal.register_shadow(exploration_plan, regime="bullish_exploration")
+    summary = dashboard_state(journal)["summary"]
+    assert summary["approved_exploration_plan_count"] == 1
+    assert summary["acknowledged_paper_order_count"] == 0
+    assert summary["filled_paper_trade_count"] == 0
+
+    journal.append(JournalEntry(event="order_submission_receipt", plan=exploration_plan))
+    journal.record_entry_fill(exploration_plan, filled_price=1.3, source="trade_updates")
+    summary = dashboard_state(journal)["summary"]
+    assert summary["acknowledged_paper_order_count"] == 1
+    assert summary["filled_paper_trade_count"] == 1
+    assert "Approved exploration plans" in dashboard_html()
 
 
 def test_dashboard_reports_the_latest_open_position_mark(tmp_path):

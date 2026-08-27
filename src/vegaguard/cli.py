@@ -108,6 +108,19 @@ async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     print(json.dumps(await scheduler.run(max_cycles=max_cycles), indent=2))
 
 
+async def _submit_approved(plan_id: str) -> None:
+    settings = get_settings()
+    if not settings.allow_order_execution or settings.dry_run:
+        raise RuntimeError(
+            "Submitting an approved plan requires ALLOW_ORDER_EXECUTION=true and DRY_RUN=false"
+        )
+    journal = DecisionJournal()
+    cycle = AutonomousCycle(
+        settings, PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
+    )
+    print(json.dumps(await cycle.submit_approved_plan(plan_id), indent=2))
+
+
 async def _preflight() -> None:
     report = await PaperPreflight(get_settings()).run()
     path = PaperPreflight.write_report(report)
@@ -162,6 +175,10 @@ def main() -> None:
     )
     scheduler_parser.add_argument("--interval-seconds", type=int, default=900)
     scheduler_parser.add_argument("--max-cycles", type=int)
+    submit_approved_parser = live_subparsers.add_parser(
+        "submit-approved", help="Submit one exact, unexpired plan previously reviewed in dry run"
+    )
+    submit_approved_parser.add_argument("--plan-id", required=True)
 
     strategy_parser = subparsers.add_parser(
         "strategy", help="Deterministic local research commands"
@@ -216,6 +233,11 @@ def main() -> None:
     if args.command == "live" and args.live_command == "run-scheduler":
         try:
             asyncio.run(_run_scheduler(args.interval_seconds, args.max_cycles))
+        except (RuntimeError, ValueError) as exc:
+            parser.error(str(exc))
+    if args.command == "live" and args.live_command == "submit-approved":
+        try:
+            asyncio.run(_submit_approved(args.plan_id))
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
     if args.command == "strategy" and args.strategy_command == "backtest":

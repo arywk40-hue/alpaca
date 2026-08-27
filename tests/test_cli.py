@@ -77,3 +77,12 @@ async def test_shadow_candidates_command_is_read_only(monkeypatch, capsys):
         "paper_only": True,
         "candidates": [{"underlying": "IWM", "classification": "below_threshold"}],
     }
+
+
+@pytest.mark.asyncio
+async def test_submit_approved_refuses_when_dry_run_is_still_enabled(monkeypatch):
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: Settings(allow_order_execution=True, dry_run=True)
+    )
+    with pytest.raises(RuntimeError, match="DRY_RUN=false"):
+        await cli._submit_approved("vg-plan-test")

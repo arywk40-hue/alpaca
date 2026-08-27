@@ -38,6 +38,9 @@ class ScanResult:
     data_timestamp: datetime | None = None
     shadow_spread: DebitSpread | None = None
     shadow_opportunity: Opportunity | None = None
+    # Exploration preserves the baseline score/regime while exposing the
+    # direction of its separately thresholded, quote-backed execution plan.
+    execution_regime: str | None = None
 
 
 class IVObservationStore(Protocol):

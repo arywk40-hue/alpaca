@@ -66,6 +66,7 @@ class Thesis(BaseModel):
 
 class TradePlan(BaseModel):
     underlying: str
+    plan_id: str = Field(default_factory=lambda: f"vg-plan-{uuid4().hex[:20]}")
     trade_mode: str = Field(default="production", pattern="^(production|exploration)$")
     score_threshold: int = Field(default=70, ge=1, le=100)
     strategy: str = Field(pattern="^(single_leg|debit_spread)$")
@@ -77,6 +78,10 @@ class TradePlan(BaseModel):
     max_loss_usd: float = Field(gt=0)
     candidate: OptionCandidate
     thesis: Thesis
+    # A preview becomes submittable only while its original two-leg quotes are
+    # still within this short approval window.
+    approval_expires_at: datetime | None = None
+    quote_timestamps: list[str] = Field(default_factory=list, max_length=2)
     client_order_id: str = Field(default_factory=lambda: f"vg-{uuid4().hex[:20]}")
     parent_client_order_id: str | None = None
 
@@ -150,6 +155,7 @@ class TradePlan(BaseModel):
             max_loss_usd=self.max_loss_usd,
             candidate=self.candidate,
             thesis=self.thesis,
+            quote_timestamps=[],
             client_order_id=f"vg-exit-{uuid4().hex[:18]}",
             parent_client_order_id=self.client_order_id,
         )
