@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from re import fullmatch
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -38,6 +39,8 @@ class OptionCandidate(BaseModel):
     delta: float | None = None
     underlying_price: float = Field(gt=0)
     quote_timestamp: str | None = None
+    volume: float | None = Field(default=None, ge=0)
+    open_interest: float | None = Field(default=None, ge=0)
 
     @property
     def midpoint(self) -> float:
@@ -113,7 +116,79 @@ class TradePlan(BaseModel):
                 raise ValueError("opening debit spread must use a positive debit limit")
             if intents == closing and self.limit_price > 0:
                 raise ValueError("closing debit spread must use a negative credit limit")
+            self._validate_defined_risk_economics(opening=intents == opening)
         return self
+
+    def _validate_defined_risk_economics(self, *, opening: bool) -> None:
+        contracts = [self._occ_contract(leg.symbol) for leg in self.legs]
+        if any(contract is None for contract in contracts):
+            raise ValueError("debit spread legs must use valid OCC option symbols")
+        first, second = contracts
+        assert first is not None and second is not None
+        if first[:3] != second[:3]:
+            raise ValueError("debit spread legs must share underlying, expiration, and option type")
+        width = abs(first[3] - second[3])
+        if width <= 0 or abs(self.limit_price) >= width:
+            raise ValueError("debit spread price must be positive risk below its strike width")
+        original_long = next(
+            leg
+            for leg in self.legs
+            if leg.position_intent in {PositionIntent.BUY_TO_OPEN, PositionIntent.SELL_TO_CLOSE}
+        )
+        original_short = next(leg for leg in self.legs if leg is not original_long)
+        long_contract = self._occ_contract(original_long.symbol)
+        short_contract = self._occ_contract(original_short.symbol)
+        assert long_contract is not None and short_contract is not None
+        option_type = long_contract[2]
+        if option_type == "C" and long_contract[3] >= short_contract[3]:
+            raise ValueError("call debit spread requires the long strike below the short strike")
+        if option_type == "P" and long_contract[3] <= short_contract[3]:
+            raise ValueError("put debit spread requires the long strike above the short strike")
+        if opening:
+            expected_max_loss = round(self.limit_price * 100 * self.qty, 2)
+            if abs(self.max_loss_usd - expected_max_loss) > 0.01:
+                raise ValueError(
+                    "maximum loss must equal debit times contract multiplier and quantity"
+                )
+            if self.candidate.symbol != original_long.symbol:
+                raise ValueError("candidate must be the opening long option leg")
+            expected_option_type = "call" if option_type == "C" else "put"
+            expiration = (
+                datetime.strptime(long_contract[1], "%y%m%d").replace(tzinfo=UTC).date().isoformat()
+            )
+            if (
+                self.underlying != self.candidate.underlying
+                or long_contract[0] != self.underlying
+                or self.candidate.option_type != expected_option_type
+                or self.candidate.expiration != expiration
+                or abs(self.candidate.strike - long_contract[3]) > 0.0001
+            ):
+                raise ValueError("candidate metadata must match the opening long OCC contract")
+
+    @staticmethod
+    def _occ_contract(symbol: str) -> tuple[str, str, str, float] | None:
+        match = fullmatch(r"([A-Z.]{1,8})(\d{6})([CP])(\d{8})", symbol)
+        if match is None:
+            return None
+        return match.group(1), match.group(2), match.group(3), int(match.group(4)) / 1000
+
+    @property
+    def spread_width(self) -> float | None:
+        if self.strategy != "debit_spread":
+            return None
+        contracts = [self._occ_contract(leg.symbol) for leg in self.legs]
+        if any(contract is None for contract in contracts):
+            return None
+        first, second = contracts
+        assert first is not None and second is not None
+        return round(abs(first[3] - second[3]), 4)
+
+    @property
+    def maximum_profit_usd(self) -> float | None:
+        width = self.spread_width
+        if width is None or self.is_closing:
+            return None
+        return round((width - self.limit_price) * 100 * self.qty, 2)
 
     @property
     def is_closing(self) -> bool:

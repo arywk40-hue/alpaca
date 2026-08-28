@@ -17,3 +17,10 @@ def test_mcp_client_falls_back_to_path_when_virtualenv_has_no_uvx(monkeypatch, t
     executable.touch()
     monkeypatch.setattr("vegaguard.mcp_client.sys.executable", str(executable))
     assert AlpacaMCPClient._uvx_command() == "uvx"
+
+
+def test_mcp_allowlist_excludes_destructive_account_wide_tools():
+    assert "place_option_order" in AlpacaMCPClient.approved_tools
+    assert "close_position" not in AlpacaMCPClient.approved_tools
+    assert "close_all_positions" not in AlpacaMCPClient.approved_tools
+    assert "exercise_option" not in AlpacaMCPClient.approved_tools

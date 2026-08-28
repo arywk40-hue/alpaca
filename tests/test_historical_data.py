@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -114,6 +115,58 @@ def test_cache_manifest_captures_research_provenance(tmp_path):
     assert '"path": "raw/stock_daily.json"' in manifest
 
 
+def test_cache_manifest_preserves_failed_fetch_state(tmp_path):
+    cache = LocalMarketDataCache(tmp_path / "data")
+    cache.record_fetch_status(
+        "started",
+        symbols=["SPY"],
+        start="2026-01-01",
+        end="2026-01-31",
+        include_options=True,
+    )
+    cache.record_fetch_status(
+        "failed",
+        symbols=["SPY"],
+        start="2026-01-01",
+        end="2026-01-31",
+        include_options=True,
+        error="AlpacaHTTPError: OPRA agreement is not signed",
+    )
+    cache.write_raw(
+        "stock_daily",
+        {"bars": []},
+        endpoint="/v2/stocks/bars",
+        symbols=["SPY"],
+        start="2026-01-01",
+        end="2026-01-31",
+        feed="iex",
+        data_kind="stock-bars",
+    )
+    manifest = json.loads((tmp_path / "data" / "cache_manifest.json").read_text())
+    assert manifest["fetches"][-1]["status"] == "failed"
+    assert "OPRA agreement" in manifest["fetches"][-1]["error"]
+    assert manifest["entries"][0]["path"] == "raw/stock_daily.json"
+
+
+@pytest.mark.asyncio
+async def test_fetch_history_records_terminal_failure_before_reraising(tmp_path):
+    class FailingProvider:
+        async def stock_bars(self, **_params):
+            raise HistoricalDataError("OPRA agreement is not signed")
+
+    with pytest.raises(HistoricalDataError, match="OPRA agreement"):
+        await fetch_history(
+            FailingProvider(),
+            symbols=["SPY"],
+            start="2026-08-01",
+            end="2026-08-02",
+            cache_root=tmp_path,
+        )
+    manifest = json.loads((tmp_path / "cache_manifest.json").read_text())
+    assert [entry["status"] for entry in manifest["fetches"]] == ["started", "failed"]
+    assert manifest["fetches"][-1]["error"] == "HistoricalDataError: OPRA agreement is not signed"
+
+
 def test_historical_quote_derives_only_point_in_time_occ_contract_metadata():
     contracts = contracts_observed_in_historical_quotes(
         [
@@ -140,6 +193,7 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
         def __init__(self):
             self.last_request_ids = ["request-1"]
             self.snapshot_calls = 0
+            self.contract_statuses: list[str] = []
 
         async def stock_bars(self, **_params):
             return {
@@ -156,7 +210,8 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
                 ]
             }
 
-        async def option_contracts(self, **_params):
+        async def option_contracts(self, **params):
+            self.contract_statuses.append(params["status"])
             return {
                 "option_contracts": [
                     {
@@ -204,6 +259,7 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
     snapshots = (tmp_path / "normalized" / "option_snapshots.json").read_text()
     manifest = (tmp_path / "cache_manifest.json").read_text()
     assert provider.snapshot_calls == 1
+    assert provider.contract_statuses == ["active", "inactive"]
     assert counts["option_snapshots"] == 1
     assert '"delta": 0.45' in snapshots
     assert '"data_kind": "option-snapshot"' in manifest

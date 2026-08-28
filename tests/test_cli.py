@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -86,3 +87,48 @@ async def test_submit_approved_refuses_when_dry_run_is_still_enabled(monkeypatch
     )
     with pytest.raises(RuntimeError, match="DRY_RUN=false"):
         await cli._submit_approved("vg-plan-test")
+
+
+@pytest.mark.asyncio
+async def test_submit_approved_requires_an_explicit_cli_session_arm(monkeypatch):
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: Settings(allow_order_execution=True, dry_run=False)
+    )
+    with pytest.raises(RuntimeError, match="--arm-paper-execution"):
+        await cli._submit_approved("vg-plan-test")
+
+
+@pytest.mark.asyncio
+async def test_session_report_command_is_read_only(monkeypatch, capsys):
+    class FakeJournal:
+        def shadow_session_report(self):
+            return {"mode": "read_only_live_shadow_evaluation", "candidate_count": 2}
+
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings())
+    monkeypatch.setattr(cli, "DecisionJournal", FakeJournal)
+    await cli._shadow_session_report()
+    assert json.loads(capsys.readouterr().out) == {
+        "paper_only": True,
+        "mode": "read_only_live_shadow_evaluation",
+        "candidate_count": 2,
+    }
+
+
+def test_replay_command_runs_the_full_credential_free_simulation(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "vegaguard",
+            "replay",
+            "--fixture",
+            "tests/fixtures/strategy_replay_sanitized.json",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    cli.main()
+    result = json.loads(capsys.readouterr().out)
+    assert result["mode"] == "offline_reproducible_demo"
+    assert result["live_execution"] == "disabled_by_design"
+    assert result["simulated_lifecycle"]["paper_trade_counters"]["submitted"] == 0

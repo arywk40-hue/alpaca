@@ -41,3 +41,18 @@ async def test_preflight_reports_missing_mcp_capability_without_executing():
     report = await PaperPreflight(Settings(), alpaca=_Alpaca(), mcp=IncompleteMCP()).run()
     assert report["status"] == "incomplete"
     assert "place_option_order" in report["mcp"]["missing_required_tools"]
+
+
+@pytest.mark.asyncio
+async def test_preflight_validates_optional_submission_account_id():
+    matching = await PaperPreflight(
+        Settings(alpaca_account_id="paper-account"), alpaca=_Alpaca(), mcp=_MCP()
+    ).run()
+    assert matching["status"] == "ready"
+    assert matching["rest"]["account_id_matches_configuration"] is True
+
+    mismatched = await PaperPreflight(
+        Settings(alpaca_account_id="different-paper-account"), alpaca=_Alpaca(), mcp=_MCP()
+    ).run()
+    assert mismatched["status"] == "incomplete"
+    assert mismatched["rest"]["account_id_matches_configuration"] is False

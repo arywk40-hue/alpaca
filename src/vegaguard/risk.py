@@ -26,7 +26,7 @@ class DeterministicRiskGate:
         if plan.trade_mode == "exploration" and plan.qty != 1:
             reasons.append("exploration permits exactly one whole contract")
         if plan.max_loss_usd > self.settings.max_trade_risk_usd:
-            reasons.append("maximum loss exceeds configured per-trade risk")
+            reasons.append("full-debit stress loss exceeds configured per-trade risk")
         if not self.settings.min_dte <= candidate.dte <= self.settings.max_dte:
             reasons.append("expiration falls outside configured DTE window")
         if candidate.spread_pct > self.settings.max_bid_ask_spread_pct:
@@ -40,6 +40,10 @@ class DeterministicRiskGate:
             reasons.append("VegaGuard execution only permits defined-risk debit spreads")
         elif {leg.side.value for leg in plan.legs} != {"buy", "sell"}:
             reasons.append("debit spread must include one bought and one sold option leg")
+        elif not plan.is_closing:
+            full_debit_stress_loss = round(plan.limit_price * 100 * plan.qty, 2)
+            if abs(plan.max_loss_usd - full_debit_stress_loss) > 0.01:
+                reasons.append("declared maximum loss does not equal full-debit stress loss")
         return GateResult(
             approved=not reasons, reasons=reasons or ["all deterministic checks passed"]
         )

@@ -26,6 +26,56 @@ async def fetch_history(
     stock_feed: str = "iex",
     include_options: bool = True,
 ) -> dict[str, int]:
+    """Fetch and preserve a terminal manifest status even when access fails."""
+    cache = LocalMarketDataCache(cache_root)
+    cache.record_fetch_status(
+        "started",
+        symbols=symbols,
+        start=start,
+        end=end,
+        include_options=include_options,
+    )
+    try:
+        result = await _fetch_history(
+            provider,
+            symbols=symbols,
+            start=start,
+            end=end,
+            cache=cache,
+            stock_feed=stock_feed,
+            include_options=include_options,
+        )
+    except Exception as exc:
+        cache.record_fetch_status(
+            "failed",
+            symbols=symbols,
+            start=start,
+            end=end,
+            include_options=include_options,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    cache.record_fetch_status(
+        "completed",
+        symbols=symbols,
+        start=start,
+        end=end,
+        include_options=include_options,
+        counts=result,
+    )
+    return result
+
+
+async def _fetch_history(
+    provider: HistoricalMarketDataProvider,
+    *,
+    symbols: list[str],
+    start: str,
+    end: str,
+    cache: LocalMarketDataCache,
+    stock_feed: str,
+    include_options: bool,
+) -> dict[str, int]:
     """Download stock bars and cache a safe, explicitly limited option-data scaffold.
 
     Alpaca does not expose an as-of timestamp on the contracts search endpoint.
@@ -34,7 +84,6 @@ async def fetch_history(
     historical-options performance claim; it is retained for auditability and
     future recordings whose metadata was captured at the decision time.
     """
-    cache = LocalMarketDataCache(cache_root)
     common = {
         "symbols": ",".join(symbols),
         "start": start,
@@ -91,18 +140,33 @@ async def fetch_history(
         data_kind="stock-bars",
     )
 
-    # Contract discovery is read-only. Status is inactive so a completed historical
-    # window can be retrieved, but observed_at deliberately prevents look-ahead use.
+    # Contract discovery is read-only. A recent historical window can refer to
+    # still-active expiries, while an older one needs inactive contracts. Fetch
+    # both status classes and deduplicate by OCC symbol. `observed_at` still
+    # prevents the current search response from leaking backward into replay.
     start_date = date.fromisoformat(start[:10])
     end_date = date.fromisoformat(end[:10])
-    contracts_payload = await provider.option_contracts(
-        underlying_symbols=",".join(symbols),
-        status="inactive",
-        expiration_date_gte=(start_date + timedelta(days=14)).isoformat(),
-        expiration_date_lte=(end_date + timedelta(days=28)).isoformat(),
-        limit=10_000,
+    contract_params = {
+        "underlying_symbols": ",".join(symbols),
+        "expiration_date_gte": (start_date + timedelta(days=14)).isoformat(),
+        "expiration_date_lte": (end_date + timedelta(days=28)).isoformat(),
+        "limit": 10_000,
+    }
+    active_contracts_payload = await provider.option_contracts(status="active", **contract_params)
+    active_contracts_request_id = _response_ids(provider)
+    inactive_contracts_payload = await provider.option_contracts(
+        status="inactive", **contract_params
     )
-    contracts_request_id = _response_ids(provider)
+    inactive_contracts_request_id = _response_ids(provider)
+    contracts_payload = _merge_contract_payloads(
+        active_contracts_payload, inactive_contracts_payload
+    )
+    contracts_request_id = (
+        ",".join(
+            value for value in (active_contracts_request_id, inactive_contracts_request_id) if value
+        )
+        or None
+    )
     observed_at = datetime.now().astimezone().isoformat()
     cache.write_raw(
         "option_contracts",
@@ -270,3 +334,16 @@ def _bundle_request_ids(pages: list[dict]) -> str | None:
         if request_id
     ]
     return ",".join(request_ids) if request_ids else None
+
+
+def _merge_contract_payloads(*payloads: dict) -> dict[str, list[dict]]:
+    """Deduplicate active/inactive contract responses without altering raw quotes."""
+    by_symbol: dict[str, dict] = {}
+    for payload in payloads:
+        rows = payload.get("option_contracts", [])
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("symbol"):
+                by_symbol.setdefault(str(row["symbol"]), row)
+    return {"option_contracts": list(by_symbol.values())}

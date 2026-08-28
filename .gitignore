@@ -11,6 +11,7 @@ build/
 # under tests/fixtures remain versioned and are the only synthetic inputs used in CI.
 data/raw/
 data/normalized/
+data/research_*/
 data/cache_manifest.json
 reports/historical_strategy_backtest.md
 results/historical_strategy_backtest.json

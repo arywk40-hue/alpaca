@@ -1,0 +1,413 @@
+"""Backend-managed, safety-preserving dashboard controller."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from websockets.exceptions import WebSocketException
+
+from .config import Settings, get_settings
+from .demo import build_offline_demo
+from .execution import PaperExecutionAgent
+from .journal import DecisionJournal
+from .mcp_client import AlpacaMCPClient
+from .models import JournalEntry
+from .monitoring import PaperTradeUpdateMonitor
+from .scheduler import MarketHoursScheduler
+from .service import AutonomousCycle
+
+
+class DashboardAgentController:
+    """Own one shadow scheduler and fixture replay task for a FastAPI process.
+
+    The worker can produce scan, candidate, risk, and preview events, but never
+    invokes the MCP order tool directly. Even when a server is configured with
+    execution flags, ``PaperExecutionAgent.submit`` leaves a plan awaiting an
+    exact unexpired-plan approval.
+    """
+
+    def __init__(
+        self,
+        *,
+        journal: DecisionJournal | None = None,
+        settings_factory: Callable[[], Settings] = get_settings,
+        cycle_factory: Callable[[Settings, PaperExecutionAgent], AutonomousCycle] = AutonomousCycle,
+        scheduler_factory: Callable[..., MarketHoursScheduler] = MarketHoursScheduler,
+        demo_builder: Callable[..., dict[str, Any]] = build_offline_demo,
+        monitor_factory: Callable[[Settings, DecisionJournal], PaperTradeUpdateMonitor]
+        | None = None,
+        enable_trade_update_monitor: bool = True,
+    ) -> None:
+        self.journal = journal or DecisionJournal()
+        self.settings_factory = settings_factory
+        self.cycle_factory = cycle_factory
+        self.scheduler_factory = scheduler_factory
+        self.demo_builder = demo_builder
+        self.monitor_factory = monitor_factory or PaperTradeUpdateMonitor
+        self.enable_trade_update_monitor = enable_trade_update_monitor
+        self._scheduler_task: asyncio.Task[None] | None = None
+        self._simulation_task: asyncio.Task[None] | None = None
+        self._monitor_task: asyncio.Task[None] | None = None
+        self._interval_seconds: int | None = None
+        self._simulation: dict[str, Any] = {"status": "idle", "last_error": None}
+        self._monitor: dict[str, Any] = {
+            "status": "stopped",
+            "last_error": None,
+            "last_event_at": None,
+        }
+        self._session_id = f"vg-session-{uuid4().hex[:20]}"
+        self._process_id = os.getpid()
+        self._paper_armed = False
+        self._armed_at: datetime | None = None
+        self._emergency_stop_active = False
+
+    def _cycle(self, settings: Settings) -> AutonomousCycle:
+        return self.cycle_factory(
+            settings,
+            PaperExecutionAgent(settings, self.journal, AlpacaMCPClient(settings)),
+        )
+
+    def status(self) -> dict[str, Any]:
+        scheduler = self.journal.scheduler_status()
+        settings = self.settings_factory()
+        configuration_ready = (
+            settings.alpaca_paper_trade and settings.allow_order_execution and not settings.dry_run
+        )
+        return {
+            "scheduler": scheduler,
+            "controller_running": self._is_running(self._scheduler_task),
+            "session_id": self._session_id,
+            "process_id": self._process_id,
+            "simulation": self._simulation,
+            "trade_update_monitor": self._monitor,
+            "paper_execution": {
+                "locked": not configuration_ready
+                or not self._paper_armed
+                or self._emergency_stop_active,
+                "configuration_ready": configuration_ready,
+                "armed": self._paper_armed,
+                "armed_at": self._armed_at.isoformat() if self._armed_at else None,
+                "emergency_stop_active": self._emergency_stop_active,
+                "paper_account": settings.alpaca_paper_trade,
+                "allow_order_execution": settings.allow_order_execution,
+                "dry_run": settings.dry_run,
+                "requirement": (
+                    "session arm plus exact unexpired plan_id approval remain mandatory"
+                ),
+            },
+        }
+
+    async def start_shadow(self, *, interval_seconds: int = 900) -> dict[str, Any]:
+        if interval_seconds < 60:
+            raise ValueError("scheduler interval must be at least 60 seconds")
+        if self._is_running(self._scheduler_task):
+            return {"status": "already_running", **self.status()}
+        settings = self.settings_factory()
+        self._interval_seconds = interval_seconds
+        scheduler = self.scheduler_factory(
+            self._cycle(settings),
+            self.journal,
+            interval_seconds=interval_seconds,
+            session_id=self._session_id,
+            process_id=self._process_id,
+        )
+        started_at = datetime.now(UTC)
+        self.journal.append(
+            JournalEntry(
+                timestamp=started_at,
+                event="scheduler_heartbeat",
+                payload={
+                    "status": "running",
+                    "cycle_number": None,
+                    "interval_seconds": interval_seconds,
+                    "last_cycle_status": None,
+                    "last_error": None,
+                    "next_run_at": (started_at + timedelta(seconds=interval_seconds)).isoformat(),
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                    "last_cycle_started_at": None,
+                    "last_cycle_completed_at": None,
+                    "last_successful_cycle_at": None,
+                    "market_open": None,
+                },
+            )
+        )
+        self._scheduler_task = asyncio.create_task(self._run_scheduler(scheduler))
+        await self._start_trade_update_monitor(settings)
+        return {"status": "started", **self.status()}
+
+    async def _run_scheduler(self, scheduler: MarketHoursScheduler) -> None:
+        try:
+            await scheduler.run()
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, TimeoutError) as exc:  # Defensive worker boundary.
+            self._record_heartbeat("error", last_error=f"{type(exc).__name__}: {exc}")
+        finally:
+            if self._scheduler_task is asyncio.current_task():
+                self._scheduler_task = None
+
+    async def stop_shadow(self) -> dict[str, Any]:
+        task = self._scheduler_task
+        if task is None or task.done():
+            self._scheduler_task = None
+            await self._stop_trade_update_monitor()
+            return {"status": "already_stopped", **self.status()}
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        self._scheduler_task = None
+        await self._stop_trade_update_monitor()
+        self._record_heartbeat("stopped")
+        return {"status": "stopped", **self.status()}
+
+    async def arm_paper_execution(self, confirmation: str) -> dict[str, Any]:
+        """Arm this backend session only after deliberate operator confirmation."""
+        if confirmation != "ARM PAPER EXECUTION":
+            return {
+                "status": "blocked",
+                "reasons": ["confirmation must equal ARM PAPER EXECUTION"],
+            }
+        settings = self.settings_factory()
+        required = {
+            "ALPACA_PAPER_TRADE=true": settings.alpaca_paper_trade,
+            "ALLOW_ORDER_EXECUTION=true": settings.allow_order_execution,
+            "DRY_RUN=false": not settings.dry_run,
+        }
+        missing = [name for name, satisfied in required.items() if not satisfied]
+        if missing:
+            return {"status": "blocked", "reasons": missing, **self.status()}
+        now = datetime.now(UTC)
+        if self._emergency_stop_active:
+            self.journal.append(
+                JournalEntry(
+                    timestamp=now,
+                    event="emergency_stop_cleared",
+                    payload={"session_id": self._session_id, "process_id": self._process_id},
+                )
+            )
+        self._emergency_stop_active = False
+        self._paper_armed = True
+        self._armed_at = now
+        self.journal.append(
+            JournalEntry(
+                timestamp=now,
+                event="paper_execution_armed",
+                payload={"session_id": self._session_id, "process_id": self._process_id},
+            )
+        )
+        return {"status": "armed", **self.status()}
+
+    async def disarm_paper_execution(self, *, reason: str = "operator") -> dict[str, Any]:
+        self._paper_armed = False
+        self._armed_at = None
+        self.journal.append(
+            JournalEntry(
+                event="paper_execution_disarmed",
+                payload={
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                    "reason": reason,
+                },
+            )
+        )
+        return {"status": "disarmed", **self.status()}
+
+    async def emergency_stop(self) -> dict[str, Any]:
+        """Latch entry execution off and halt backend automation without external calls."""
+        self._emergency_stop_active = True
+        self._paper_armed = False
+        self._armed_at = None
+        self.journal.append(
+            JournalEntry(
+                event="emergency_stop_activated",
+                payload={
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                    "effect": "new entries disarmed; backend workers stopped",
+                },
+            )
+        )
+        await self.stop_shadow()
+        await self._stop_simulation()
+        return {"status": "emergency_stopped", **self.status()}
+
+    async def start_simulation(
+        self,
+        *,
+        fixture: str | Path = "tests/fixtures/strategy_replay_sanitized.json",
+        output_dir: str | Path = "results/dashboard_simulation",
+    ) -> dict[str, Any]:
+        if self._is_running(self._simulation_task):
+            return {"status": "already_running", "simulation": self._simulation}
+        self._simulation = {"status": "running", "last_error": None, "output_dir": str(output_dir)}
+        self.journal.append(
+            JournalEntry(event="simulation_replay_started", payload={"fixture": str(fixture)})
+        )
+        self._simulation_task = asyncio.create_task(
+            self._run_simulation(Path(fixture), Path(output_dir))
+        )
+        return {"status": "started", "simulation": self._simulation}
+
+    async def _run_simulation(self, fixture: Path, output_dir: Path) -> None:
+        try:
+            report = await asyncio.to_thread(
+                self.demo_builder, fixture=fixture, output_dir=output_dir
+            )
+            self._simulation = {
+                "status": "completed",
+                "last_error": None,
+                "output_dir": str(output_dir),
+                "mode": report.get("mode"),
+                "paper_trade_counters": report.get("simulated_lifecycle", {}).get(
+                    "paper_trade_counters", {}
+                ),
+            }
+            self.journal.append(
+                JournalEntry(event="simulation_replay_completed", payload=self._simulation)
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._simulation = {"status": "error", "last_error": f"{type(exc).__name__}: {exc}"}
+            self.journal.append(
+                JournalEntry(event="simulation_replay_error", payload=self._simulation)
+            )
+        finally:
+            self._simulation_task = None
+
+    async def submit_approved_plan(self, plan_id: str) -> dict[str, Any]:
+        """Reach MCP only through the existing exact-plan gate sequence."""
+        settings = self.settings_factory()
+        required = {
+            "ALPACA_PAPER_TRADE=true": settings.alpaca_paper_trade,
+            "ALLOW_ORDER_EXECUTION=true": settings.allow_order_execution,
+            "DRY_RUN=false": not settings.dry_run,
+        }
+        missing = [name for name, satisfied in required.items() if not satisfied]
+        if self._emergency_stop_active:
+            missing.append("emergency stop must be deliberately cleared by re-arming")
+        if not self._paper_armed:
+            missing.append("paper execution session must be armed")
+        if missing:
+            return {"status": "blocked", "reasons": missing}
+        try:
+            return await self._cycle(settings).submit_approved_plan(plan_id)
+        finally:
+            # One deliberate arm authorizes at most one exact-plan attempt.
+            await self.disarm_paper_execution(reason="exact_plan_attempt_completed")
+
+    async def aclose(self) -> None:
+        await self.stop_shadow()
+        await self._stop_trade_update_monitor()
+        await self._stop_simulation()
+        self._paper_armed = False
+        self._armed_at = None
+
+    async def _start_trade_update_monitor(self, settings: Settings) -> None:
+        if not self.enable_trade_update_monitor:
+            self._monitor = {
+                "status": "disabled",
+                "last_error": None,
+                "last_event_at": None,
+            }
+            return
+        if not settings.alpaca_api_key or not settings.alpaca_secret_key:
+            self._monitor = {
+                "status": "not_configured",
+                "last_error": "paper credentials are not configured",
+                "last_event_at": None,
+            }
+            return
+        if self._is_running(self._monitor_task):
+            return
+        self._monitor = {"status": "running", "last_error": None, "last_event_at": None}
+        self._monitor_task = asyncio.create_task(self._run_trade_update_monitor(settings))
+
+    async def _run_trade_update_monitor(self, settings: Settings) -> None:
+        try:
+            while True:
+                try:
+                    monitor = self.monitor_factory(settings, self.journal)
+                    async for _event in monitor.events():
+                        self._monitor = {
+                            "status": "running",
+                            "last_error": None,
+                            "last_event_at": datetime.now(UTC).isoformat(),
+                        }
+                    raise RuntimeError("paper trade-update stream ended")
+                except (OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
+                    self._monitor = {
+                        "status": "error",
+                        "last_error": f"{type(exc).__name__}: {exc}",
+                        "last_event_at": self._monitor.get("last_event_at"),
+                    }
+                    self.journal.append(
+                        JournalEntry(event="trade_update_monitor_error", payload=self._monitor)
+                    )
+                    await asyncio.sleep(5)
+                    self._monitor = {
+                        "status": "running",
+                        "last_error": self._monitor.get("last_error"),
+                        "last_event_at": self._monitor.get("last_event_at"),
+                    }
+        finally:
+            if self._monitor_task is asyncio.current_task():
+                self._monitor_task = None
+
+    async def _stop_trade_update_monitor(self) -> None:
+        task = self._monitor_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._monitor_task = None
+        if self._monitor.get("status") not in {"disabled", "not_configured"}:
+            self._monitor = {
+                "status": "stopped",
+                "last_error": self._monitor.get("last_error"),
+                "last_event_at": self._monitor.get("last_event_at"),
+            }
+
+    async def _stop_simulation(self) -> None:
+        if self._simulation_task is None or self._simulation_task.done():
+            self._simulation_task = None
+            return
+        self._simulation_task.cancel()
+        try:
+            await self._simulation_task
+        except asyncio.CancelledError:
+            pass
+        self._simulation_task = None
+        self._simulation = {"status": "stopped", "last_error": None}
+
+    def _record_heartbeat(self, status: str, *, last_error: str | None = None) -> None:
+        now = datetime.now(UTC)
+        self.journal.append(
+            JournalEntry(
+                timestamp=now,
+                event="scheduler_heartbeat",
+                payload={
+                    "status": status,
+                    "cycle_number": None,
+                    "interval_seconds": self._interval_seconds or 900,
+                    "last_cycle_status": None,
+                    "last_error": last_error,
+                    "next_run_at": None,
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                },
+            )
+        )
+
+    @staticmethod
+    def _is_running(task: asyncio.Task[None] | None) -> bool:
+        return task is not None and not task.done()

@@ -51,3 +51,20 @@ async def test_option_snapshots_requests_the_configured_dte_window(monkeypatch):
     today = datetime.now(UTC).date()
     assert requests[0]["expiration_date_gte"] == (today + timedelta(days=14)).isoformat()
     assert requests[0]["expiration_date_lte"] == (today + timedelta(days=28)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_option_snapshots_can_request_exact_legs_for_read_only_repricing(monkeypatch):
+    client = AlpacaRESTClient(Settings())
+    requests: list[tuple[str, dict]] = []
+
+    async def response(*args, **kwargs):
+        requests.append((args[1], args[2] if len(args) > 2 else kwargs["params"]))
+        return {"snapshots": {}}
+
+    monkeypatch.setattr(client, "_get", response)
+    await client.option_snapshots("SPY", symbols=["SPY260918C00650000", "SPY260918C00655000"])
+    path, params = requests[0]
+    assert path == "/v1beta1/options/snapshots"
+    assert params["symbols"] == "SPY260918C00650000,SPY260918C00655000"
+    assert "expiration_date_gte" not in params

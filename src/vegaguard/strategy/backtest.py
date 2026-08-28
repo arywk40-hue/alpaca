@@ -13,8 +13,11 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ..data.cache import latest_fetch_status
 from ..models import OptionCandidate
 from .indicators import ema, percent_return, realized_volatility, volume_ratio, vwap
+from .metrics import confidence_intervals
+from .options_math import black_scholes_delta, quote_implied_volatility
 from .scorer import Regime, SignalInputs, score_signal
 from .spread_builder import DebitSpread, build_debit_spread, position_size
 
@@ -53,6 +56,7 @@ class RejectedOpportunity:
 class HistoricalTrade:
     symbol: str
     regime: str
+    entry_score: int
     entry_timestamp: str
     exit_timestamp: str
     quantity: int
@@ -62,6 +66,9 @@ class HistoricalTrade:
     exit_value: float
     gross_pnl: float
     estimated_bid_ask_cost: float
+    fees_usd: float
+    slippage_usd: float
+    total_costs_usd: float
     net_pnl: float
     exit_reason: str
     holding_minutes: int
@@ -71,6 +78,7 @@ class HistoricalTrade:
 class _OpenPosition:
     symbol: str
     regime: Regime
+    entry_score: int
     spread: DebitSpread
     quantity: int
     entry_at: datetime
@@ -80,6 +88,7 @@ class _OpenPosition:
 @dataclass(frozen=True)
 class HistoricalBacktestResult:
     data_classification: str
+    score_threshold: int
     observations: int
     eligible_opportunities: int
     no_trade_decisions: int
@@ -89,10 +98,17 @@ class HistoricalBacktestResult:
     maximum_simultaneous_exposure: int
     per_symbol_net_pnl: dict[str, float]
     per_regime_net_pnl: dict[str, float]
+    quote_derived_risk_free_rate: float = 0.04
+    exit_horizon_minutes: int | None = None
+    dataset_integrity: str = "manifest_unavailable"
+    dataset_integrity_reason: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         gross = round(sum(trade.gross_pnl for trade in self.trades), 2)
         costs = round(sum(trade.estimated_bid_ask_cost for trade in self.trades), 2)
+        fees = round(sum(trade.fees_usd for trade in self.trades), 2)
+        slippage = round(sum(trade.slippage_usd for trade in self.trades), 2)
+        total_costs = round(sum(trade.total_costs_usd for trade in self.trades), 2)
         net = round(sum(trade.net_pnl for trade in self.trades), 2)
         pnls = [trade.net_pnl for trade in self.trades]
         wins = [pnl for pnl in pnls if pnl > 0]
@@ -105,23 +121,58 @@ class HistoricalBacktestResult:
         rejected_reasons: dict[str, int] = {}
         for rejection in self.rejected:
             rejected_reasons[rejection.reason] = rejected_reasons.get(rejection.reason, 0) + 1
+        net_before_configured_slippage = sum(
+            trade.net_pnl + trade.slippage_usd for trade in self.trades
+        )
+        slippage_sensitivity = {
+            f"{per_leg:.2f}": round(
+                net_before_configured_slippage
+                - sum(per_leg * 4 * trade.quantity for trade in self.trades),
+                2,
+            )
+            for per_leg in (0.0, 0.25, 0.50)
+        }
         return {
             "classification": self.data_classification,
+            "score_threshold": self.score_threshold,
+            "quote_derived_risk_free_rate": self.quote_derived_risk_free_rate,
+            "exit_horizon_minutes": self.exit_horizon_minutes,
+            "dataset_integrity": self.dataset_integrity,
+            "dataset_integrity_reason": self.dataset_integrity_reason,
             "observations": self.observations,
             "eligible_opportunities": self.eligible_opportunities,
             "no_trade_decisions": self.no_trade_decisions,
             "missing_data_count": self.missing_data_count,
+            "missing_data_rate": round(
+                self.missing_data_count / (self.observations + self.missing_data_count), 4
+            )
+            if self.observations + self.missing_data_count
+            else 0.0,
             "trade_count": len(self.trades),
+            "unique_opportunity_count": len(
+                {
+                    (trade.symbol, trade.long_symbol, trade.short_symbol, trade.entry_timestamp)
+                    for trade in self.trades
+                }
+            ),
+            "completed_spread_count": len(self.trades),
+            "simulated_option_fill_count": len(self.trades) * 2,
             "bullish_trades": sum(trade.regime == "bullish" for trade in self.trades),
             "bearish_trades": sum(trade.regime == "bearish" for trade in self.trades),
             "gross_pnl": gross,
             "estimated_bid_ask_cost": costs,
+            "fees_usd": fees,
+            "slippage_usd": slippage,
+            "total_costs_usd": total_costs,
             "net_pnl": net,
+            "expectancy_usd_per_trade": round(net / len(pnls), 2) if pnls else 0.0,
             "win_rate": round(len(wins) / len(pnls), 4) if pnls else 0.0,
             "average_win": round(sum(wins) / len(wins), 2) if wins else 0.0,
             "average_loss": round(sum(losses) / len(losses), 2) if losses else 0.0,
             "profit_factor": round(sum(wins) / abs(sum(losses)), 4) if losses else None,
             "maximum_drawdown": round(drawdown, 2),
+            "confidence_intervals": confidence_intervals(pnls),
+            "slippage_sensitivity_net_pnl_by_usd_per_leg": slippage_sensitivity,
             "per_symbol_net_pnl": self.per_symbol_net_pnl,
             "per_regime_net_pnl": self.per_regime_net_pnl,
             "average_holding_minutes": round(
@@ -148,6 +199,11 @@ class HistoricalBacktester:
         initial_equity: float = 100_000.0,
         max_open_positions: int = 3,
         max_contracts_per_trade: int = 1,
+        score_threshold: int = 70,
+        fee_per_contract_usd: float = 0.0,
+        slippage_per_leg_usd: float = 0.0,
+        quote_derived_risk_free_rate: float = 0.04,
+        exit_horizon_minutes: int | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.symbols = [symbol.upper() for symbol in symbols]
@@ -156,36 +212,64 @@ class HistoricalBacktester:
         self.initial_equity = initial_equity
         if max_open_positions < 1 or max_contracts_per_trade < 1:
             raise ValueError("position limits must be positive")
+        if not 1 <= score_threshold <= 100:
+            raise ValueError("score_threshold must be between 1 and 100")
+        if fee_per_contract_usd < 0 or slippage_per_leg_usd < 0:
+            raise ValueError("fee and slippage assumptions must be non-negative")
+        if not 0 <= quote_derived_risk_free_rate <= 0.10:
+            raise ValueError("quote_derived_risk_free_rate must be between 0 and 0.10")
+        if exit_horizon_minutes is not None and exit_horizon_minutes not in {15, 30, 60}:
+            raise ValueError("exit_horizon_minutes must be one of 15, 30, or 60")
         self.max_open_positions = max_open_positions
         self.max_contracts_per_trade = max_contracts_per_trade
+        self.score_threshold = score_threshold
+        self.fee_per_contract_usd = fee_per_contract_usd
+        self.slippage_per_leg_usd = slippage_per_leg_usd
+        self.quote_derived_risk_free_rate = quote_derived_risk_free_rate
+        self.exit_horizon_minutes = exit_horizon_minutes
 
     def run(self) -> HistoricalBacktestResult:
+        dataset_integrity, integrity_reason = self._dataset_integrity()
         daily = self._records("stock_daily")
         intraday = self._records("stock_30min")
         contracts = self._records("option_contracts")
         quotes = self._records("option_quotes")
         snapshots = self._records("option_snapshots")
         quotes = self._merge_quote_greeks(quotes, snapshots)
-        decision_times = sorted(
-            {
-                _bar_close_timestamp(row)
-                for row in intraday
-                if row.get("symbol") in self.symbols
-                and self.start <= _bar_close_timestamp(row) <= self.end
-            }
-        )
+        quotes = self._derive_quote_greeks(quotes, intraday)
+        decision_times = {
+            _bar_close_timestamp(row)
+            for row in intraday
+            if row.get("symbol") in self.symbols
+            and self.start <= _bar_close_timestamp(row) <= self.end
+        }
+        quote_times = {
+            _timestamp(str(quote["timestamp"]))
+            for quote in quotes
+            if self.start <= _timestamp(str(quote["timestamp"])) <= self.end
+        }
+        event_times = sorted(decision_times | quote_times)
         trades: list[HistoricalTrade] = []
         rejected: list[RejectedOpportunity] = []
         open_positions: list[_OpenPosition] = []
         observations = eligible = no_trade = missing = max_exposure = 0
 
-        for now in decision_times:
-            closed = self._close_positions(open_positions, quotes, now)
+        for now in event_times:
+            closed = self._close_positions(
+                open_positions,
+                quotes,
+                now,
+                fee_per_contract_usd=self.fee_per_contract_usd,
+                slippage_per_leg_usd=self.slippage_per_leg_usd,
+                exit_horizon_minutes=self.exit_horizon_minutes,
+            )
             for position, trade in closed:
                 open_positions.remove(position)
                 trades.append(trade)
+            if now not in decision_times:
+                continue
             for symbol in self.symbols:
-                feature = self._signal_inputs(symbol, now, daily, intraday, snapshots)
+                feature = self._signal_inputs(symbol, now, daily, intraday, snapshots, quotes)
                 if feature is None:
                     rejected.append(
                         RejectedOpportunity(now.isoformat(), symbol, "incomplete_signal_data")
@@ -193,7 +277,7 @@ class HistoricalBacktester:
                     missing += 1
                     continue
                 observations += 1
-                decision = score_signal(feature)
+                decision = score_signal(feature, threshold=self.score_threshold)
                 if decision.regime not in {Regime.BULLISH, Regime.BEARISH}:
                     no_trade += 1
                     rejected.append(
@@ -254,6 +338,7 @@ class HistoricalBacktester:
                     _OpenPosition(
                         symbol=symbol,
                         regime=decision.regime,
+                        entry_score=decision.score,
                         spread=spread,
                         quantity=quantity,
                         entry_at=now,
@@ -268,13 +353,23 @@ class HistoricalBacktester:
         for position in open_positions:
             rejected.append(
                 RejectedOpportunity(
-                    position.entry_at.isoformat(), position.symbol, "no_later_executable_exit_quote"
+                    position.entry_at.isoformat(),
+                    position.symbol,
+                    (
+                        f"no_executable_exit_quote_at_or_after_{self.exit_horizon_minutes}m_horizon"
+                        if self.exit_horizon_minutes is not None
+                        else "no_later_executable_exit_quote"
+                    ),
                 )
             )
         classification = (
-            "REAL HISTORICAL OPTION BACKTEST"
-            if trades and contracts and quotes
-            else "STOCK-SIGNAL-ONLY ANALYSIS"
+            "INCOMPLETE HISTORICAL DATASET"
+            if dataset_integrity == "fetch_failed"
+            else (
+                "REAL HISTORICAL OPTION BACKTEST"
+                if trades and contracts and quotes
+                else "STOCK-SIGNAL-ONLY ANALYSIS"
+            )
         )
         per_symbol: dict[str, float] = {}
         per_regime: dict[str, float] = {}
@@ -283,6 +378,7 @@ class HistoricalBacktester:
             per_regime[trade.regime] = round(per_regime.get(trade.regime, 0) + trade.net_pnl, 2)
         return HistoricalBacktestResult(
             data_classification=classification,
+            score_threshold=self.score_threshold,
             observations=observations,
             eligible_opportunities=eligible,
             no_trade_decisions=no_trade,
@@ -292,7 +388,22 @@ class HistoricalBacktester:
             maximum_simultaneous_exposure=max_exposure,
             per_symbol_net_pnl=per_symbol,
             per_regime_net_pnl=per_regime,
+            quote_derived_risk_free_rate=self.quote_derived_risk_free_rate,
+            exit_horizon_minutes=self.exit_horizon_minutes,
+            dataset_integrity=dataset_integrity,
+            dataset_integrity_reason=integrity_reason,
         )
+
+    def _dataset_integrity(self) -> tuple[str, str | None]:
+        """Prevent a partial cache from being labelled valid options research."""
+        status = latest_fetch_status(self.data_dir.parent)
+        if not status:
+            return "manifest_unavailable", None
+        if status.get("status") == "failed":
+            return "fetch_failed", str(status.get("error") or "historical fetch failed")
+        if status.get("status") == "completed":
+            return "fetch_completed", None
+        return "fetch_incomplete", "historical fetch did not reach a completed state"
 
     def _records(self, name: str) -> list[dict[str, Any]]:
         return [
@@ -329,6 +440,71 @@ class HistoricalBacktester:
             )
         return merged
 
+    def _derive_quote_greeks(
+        self, quotes: list[dict[str, Any]], intraday: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Fill absent historical IV/Delta from an observed quote midpoint.
+
+        The transform uses only a bar whose close was complete by the option
+        quote timestamp. It never uses current snapshots or a later underlying
+        price, and it preserves an explicit source label for auditability.
+        """
+        enriched: list[dict[str, Any]] = []
+        for quote in quotes:
+            if quote.get("delta") is not None and quote.get("implied_volatility") is not None:
+                enriched.append({**quote, "iv_source": "official"})
+                continue
+            parsed = _parse_option_symbol(str(quote.get("symbol", "")))
+            timestamp_value = quote.get("timestamp")
+            if parsed is None or timestamp_value is None:
+                enriched.append(quote)
+                continue
+            underlying, expiration, option_type, strike = parsed
+            timestamp = _timestamp(str(timestamp_value))
+            dte = (expiration - timestamp.date()).days
+            spot = _completed_bar_close(underlying, timestamp, intraday)
+            try:
+                bid, ask = float(quote["bid"]), float(quote["ask"])
+            except (KeyError, TypeError, ValueError):
+                enriched.append(quote)
+                continue
+            iv = (
+                quote_implied_volatility(
+                    spot=spot,
+                    strike=strike,
+                    years=dte / 365,
+                    option_price=(bid + ask) / 2,
+                    option_type=option_type,
+                    rate=self.quote_derived_risk_free_rate,
+                )
+                if spot is not None and dte > 0 and bid > 0 and ask > bid
+                else None
+            )
+            if iv is None:
+                enriched.append(quote)
+                continue
+            delta = black_scholes_delta(
+                spot=spot,
+                strike=strike,
+                years=dte / 365,
+                volatility=iv,
+                option_type=option_type,
+                rate=self.quote_derived_risk_free_rate,
+            )
+            if delta is None:
+                enriched.append(quote)
+                continue
+            enriched.append(
+                {
+                    **quote,
+                    "implied_volatility": iv,
+                    "delta": delta,
+                    "greeks_timestamp": timestamp.isoformat(),
+                    "iv_source": "quote_derived",
+                }
+            )
+        return enriched
+
     def _signal_inputs(
         self,
         symbol: str,
@@ -336,6 +512,7 @@ class HistoricalBacktester:
         daily: list[dict[str, Any]],
         intraday: list[dict[str, Any]],
         snapshots: list[dict[str, Any]],
+        quotes: list[dict[str, Any]],
     ) -> SignalInputs | None:
         # A daily bar's timestamp alone does not prove its close was known intraday.
         # Use completed prior sessions only, preventing the current day's close leak.
@@ -363,7 +540,7 @@ class HistoricalBacktester:
             ],
             key=lambda item: item["timestamp"],
         )
-        iv_history = self._implied_volatility_history(symbol, now, snapshots)
+        iv_history = self._implied_volatility_history(symbol, now, snapshots, quotes)
         if len(prior_daily) < 22 or len(current) < 21 or len(spy_daily) < 2 or iv_history is None:
             return None
         implied_volatility, prior_implied_volatility = iv_history
@@ -392,18 +569,21 @@ class HistoricalBacktester:
             market_return_1d_pct=percent_return([float(row["close"]) for row in spy_daily], 1),
         )
 
-    @staticmethod
     def _implied_volatility_history(
-        symbol: str, now: datetime, snapshots: list[dict[str, Any]]
+        self,
+        symbol: str,
+        now: datetime,
+        snapshots: list[dict[str, Any]],
+        quotes: list[dict[str, Any]],
     ) -> tuple[float, float] | None:
         """Return current/prior IV using observations made no later than ``now``."""
         history = sorted(
             [
-                snapshot
-                for snapshot in snapshots
-                if str(snapshot.get("symbol", "")).startswith(symbol)
-                and snapshot.get("implied_volatility") is not None
-                and _timestamp(str(snapshot["timestamp"])) <= now
+                row
+                for row in [*snapshots, *quotes]
+                if str(row.get("symbol", "")).startswith(symbol)
+                and row.get("implied_volatility") is not None
+                and _timestamp(str(row["timestamp"])) <= now
             ],
             key=lambda item: item["timestamp"],
         )
@@ -468,7 +648,9 @@ class HistoricalBacktester:
                         ask=float(quote["ask"]),
                         delta=float(quote["delta"]),
                         implied_volatility=float(quote["implied_volatility"]),
+                        iv_source=str(quote.get("iv_source", "official")),
                         underlying_price=underlying_price,
+                        quote_timestamp=_timestamp(str(quote["timestamp"])).isoformat(),
                     )
                 )
             except (TypeError, ValueError):
@@ -479,7 +661,13 @@ class HistoricalBacktester:
 
     @staticmethod
     def _close_positions(
-        positions: list[_OpenPosition], quotes: list[dict[str, Any]], now: datetime
+        positions: list[_OpenPosition],
+        quotes: list[dict[str, Any]],
+        now: datetime,
+        *,
+        fee_per_contract_usd: float = 0.0,
+        slippage_per_leg_usd: float = 0.0,
+        exit_horizon_minutes: int | None = None,
     ) -> list[tuple[_OpenPosition, HistoricalTrade]]:
         closed: list[tuple[_OpenPosition, HistoricalTrade]] = []
         for position in positions:
@@ -495,7 +683,11 @@ class HistoricalBacktester:
             elapsed = now - position.entry_at
             pct_return = (exit_value - position.spread.debit) / position.spread.debit
             expiration = date.fromisoformat(position.spread.long_leg.expiration)
-            if pct_return >= 0.50:
+            if exit_horizon_minutes is not None:
+                if elapsed < timedelta(minutes=exit_horizon_minutes):
+                    continue
+                reason = f"fixed_{exit_horizon_minutes}_minute_exit"
+            elif pct_return >= 0.50:
                 reason = "take_profit"
             elif pct_return <= -0.35:
                 reason = "stop_loss"
@@ -515,12 +707,18 @@ class HistoricalBacktester:
             )
             gross = round((exit_value - position.spread.debit) * 100 * position.quantity, 2)
             estimated_cost = round(cost * 100 * position.quantity, 2)
+            # Entry and exit each have two option legs. These are declared
+            # assumptions in addition to observed executable bid/ask prices.
+            fees = round(fee_per_contract_usd * 2 * position.quantity, 2)
+            slippage = round(slippage_per_leg_usd * 4 * position.quantity, 2)
+            total_costs = round(estimated_cost + fees + slippage, 2)
             closed.append(
                 (
                     position,
                     HistoricalTrade(
                         symbol=position.symbol,
                         regime=position.regime.value,
+                        entry_score=position.entry_score,
                         entry_timestamp=position.entry_at.isoformat(),
                         exit_timestamp=now.isoformat(),
                         quantity=position.quantity,
@@ -530,13 +728,52 @@ class HistoricalBacktester:
                         exit_value=exit_value,
                         gross_pnl=gross,
                         estimated_bid_ask_cost=estimated_cost,
-                        net_pnl=round(gross - estimated_cost, 2),
+                        fees_usd=fees,
+                        slippage_usd=slippage,
+                        total_costs_usd=total_costs,
+                        net_pnl=round(gross - total_costs, 2),
                         exit_reason=reason,
                         holding_minutes=int(elapsed.total_seconds() // 60),
                     ),
                 )
             )
         return closed
+
+
+def _parse_option_symbol(symbol: str) -> tuple[str, date, str, float] | None:
+    """Parse immutable OCC fields without consulting future contract metadata."""
+    if len(symbol) < 15:
+        return None
+    try:
+        tail = symbol[-15:]
+        underlying, yymmdd, option_code, strike_millis = symbol[:-15], tail[:6], tail[6], tail[7:]
+        expiration = datetime.strptime(yymmdd, "%y%m%d").replace(tzinfo=UTC).date()
+        return (
+            underlying,
+            expiration,
+            {"C": "call", "P": "put"}[option_code],
+            int(strike_millis) / 1000,
+        )
+    except (KeyError, ValueError):
+        return None
+
+
+def _completed_bar_close(
+    symbol: str, observed_at: datetime, intraday: list[dict[str, Any]]
+) -> float | None:
+    """Return only an underlying close already complete at the option quote time."""
+    completed = [
+        row
+        for row in intraday
+        if row.get("symbol") == symbol and _bar_close_timestamp(row) <= observed_at
+    ]
+    if not completed:
+        return None
+    latest = max(completed, key=_bar_close_timestamp)
+    try:
+        return float(latest["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _latest_quote(
@@ -592,6 +829,9 @@ def write_historical_report(
         "",
         f"- Date range: {start} to {end}",
         f"- Symbols: {', '.join(symbols)}",
+        f"- Research score threshold: {payload['score_threshold']}",
+        f"- Quote-derived IV risk-free rate: {payload['quote_derived_risk_free_rate']}",
+        f"- Fixed exit horizon minutes: {payload['exit_horizon_minutes']}",
         (
             "- Data source/endpoints: Alpaca `/v2/stocks/bars`, `/v1beta1/options/quotes`, "
             "`/v1beta1/options/snapshots`, and `/v2/options/contracts`."
@@ -618,6 +858,9 @@ def write_historical_report(
         "bearish_trades",
         "gross_pnl",
         "estimated_bid_ask_cost",
+        "fees_usd",
+        "slippage_usd",
+        "total_costs_usd",
         "net_pnl",
         "win_rate",
         "average_win",
@@ -627,6 +870,8 @@ def write_historical_report(
         "average_holding_minutes",
         "maximum_simultaneous_exposure",
         "missing_data_count",
+        "missing_data_rate",
+        "expectancy_usd_per_trade",
         "statistically_meaningful",
     ):
         lines.append(f"- {key.replace('_', ' ')}: {payload[key]}")

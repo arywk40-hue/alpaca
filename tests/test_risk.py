@@ -46,7 +46,7 @@ def plan(*, dte: int = 14, bid: float = 2.0, ask: float = 2.1, qty: int = 1) -> 
         ],
         qty=qty,
         limit_price=2.05,
-        max_loss_usd=105,
+        max_loss_usd=205 * qty,
         candidate=candidate,
         thesis=thesis,
     )
@@ -82,3 +82,15 @@ def test_blocks_single_leg_execution_even_when_other_rules_pass():
 def test_settings_refuse_live_mode_before_any_client_can_initialize():
     with pytest.raises(ValueError, match="permanently restricted"):
         Settings(alpaca_paper_trade=False)
+
+
+def test_trade_plan_rejects_mismatched_or_falsified_defined_risk_economics():
+    payload = plan().model_dump(mode="json")
+    payload["legs"][1]["symbol"] = "SPY260918P00655000"
+    with pytest.raises(ValueError, match="share underlying, expiration, and option type"):
+        TradePlan.model_validate(payload)
+
+    payload = plan().model_dump(mode="json")
+    payload["max_loss_usd"] = 1.0
+    with pytest.raises(ValueError, match="maximum loss must equal debit"):
+        TradePlan.model_validate(payload)

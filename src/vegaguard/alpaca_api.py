@@ -79,20 +79,33 @@ class AlpacaRESTClient:
         )
         return list(reversed(self._bars_for_symbol(data, symbol)))
 
-    async def option_snapshots(self, underlying: str) -> dict[str, dict]:
+    async def option_snapshots(
+        self, underlying: str, *, symbols: list[str] | None = None
+    ) -> dict[str, dict]:
         today = datetime.now(UTC).date()
-        data = await self._get(
-            self.data_base_url,
-            f"/v1beta1/options/snapshots/{underlying}",
-            {
-                # Alpaca defaults this endpoint to near expiries. Request the
-                # same 14–28 DTE window that the defined-risk spread builder
-                # is permitted to trade.
-                "expiration_date_gte": (today + timedelta(days=self.settings.min_dte)).isoformat(),
-                "expiration_date_lte": (today + timedelta(days=self.settings.max_dte)).isoformat(),
-                "limit": 1000,
-            },
+        params: dict[str, Any] = {"limit": 1000}
+        if symbols:
+            params["symbols"] = ",".join(symbols)
+        else:
+            # Alpaca defaults this endpoint to near expiries. Request the same
+            # 14–28 DTE window that the defined-risk spread builder permits.
+            params.update(
+                {
+                    "expiration_date_gte": (
+                        today + timedelta(days=self.settings.min_dte)
+                    ).isoformat(),
+                    "expiration_date_lte": (
+                        today + timedelta(days=self.settings.max_dte)
+                    ).isoformat(),
+                }
+            )
+        # Alpaca exposes the option chain and an exact-contract snapshot as
+        # different endpoints.  The chain path accepts an underlying; the
+        # multi-contract path requires `symbols` and has no underlying path.
+        path = (
+            "/v1beta1/options/snapshots" if symbols else f"/v1beta1/options/snapshots/{underlying}"
         )
+        data = await self._get(self.data_base_url, path, params)
         snapshots = data.get("snapshots")
         return snapshots if isinstance(snapshots, dict) else {}
 

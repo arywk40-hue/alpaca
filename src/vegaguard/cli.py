@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import get_settings
 from .data.alpaca import AlpacaHistoricalDataProvider
 from .data.fetch import fetch_history
+from .demo import build_offline_demo
 from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
@@ -15,8 +16,12 @@ from .preflight import PaperPreflight
 from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
 from .strategy.backtest import HistoricalBacktester, write_historical_report
-from .strategy.replay import load_observations, run_replay, write_report
-from .strategy.research import compare_replay_scorers
+from .strategy.replay import load_observations
+from .strategy.research import (
+    compare_replay_scorers,
+    confidence_calibration_study,
+    walk_forward_threshold_study,
+)
 
 
 async def _inspect_mcp() -> None:
@@ -98,6 +103,19 @@ async def _shadow_candidates(limit: int) -> None:
     )
 
 
+async def _shadow_session_report() -> None:
+    settings = get_settings()
+    print(
+        json.dumps(
+            {
+                "paper_only": settings.alpaca_paper_trade,
+                **DecisionJournal().shadow_session_report(),
+            },
+            indent=2,
+        )
+    )
+
+
 async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     settings = get_settings()
     journal = DecisionJournal()
@@ -108,11 +126,15 @@ async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     print(json.dumps(await scheduler.run(max_cycles=max_cycles), indent=2))
 
 
-async def _submit_approved(plan_id: str) -> None:
+async def _submit_approved(plan_id: str, *, session_armed: bool = False) -> None:
     settings = get_settings()
     if not settings.allow_order_execution or settings.dry_run:
         raise RuntimeError(
             "Submitting an approved plan requires ALLOW_ORDER_EXECUTION=true and DRY_RUN=false"
+        )
+    if not session_armed:
+        raise RuntimeError(
+            "Submitting an approved plan requires the explicit --arm-paper-execution session flag"
         )
     journal = DecisionJournal()
     cycle = AutonomousCycle(
@@ -124,7 +146,19 @@ async def _submit_approved(plan_id: str) -> None:
 async def _preflight() -> None:
     report = await PaperPreflight(get_settings()).run()
     path = PaperPreflight.write_report(report)
-    print(json.dumps({**report, "report_path": str(path)}, indent=2))
+    summary = {
+        "status": report["status"],
+        "checked_at": report["checked_at"],
+        "paper_only": report["paper_only"],
+        "rest": report["rest"],
+        "market_data": report["market_data"],
+        "mcp": {
+            "available_tool_count": len(report["mcp"]["available_tools"]),
+            "missing_required_tools": report["mcp"]["missing_required_tools"],
+        },
+        "report_path": str(path),
+    }
+    print(json.dumps(summary, indent=2))
 
 
 def _symbols(value: str) -> list[str]:
@@ -141,6 +175,11 @@ def main() -> None:
     subparsers.add_parser(
         "preflight", help="Verify paper REST, option data, and MCP setup read-only"
     )
+    demo_parser = subparsers.add_parser(
+        "demo", help="Build a credential-free offline replay/research demonstration bundle"
+    )
+    demo_parser.add_argument("--fixture", default="tests/fixtures/strategy_replay_sanitized.json")
+    demo_parser.add_argument("--output-dir", default="results/offline_demo")
 
     data_parser = subparsers.add_parser("data", help="Read-only historical data commands")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
@@ -170,6 +209,9 @@ def main() -> None:
         "shadow-candidates", help="Read below-threshold and rejected candidate ledger"
     )
     shadow_candidates_parser.add_argument("--limit", type=int, default=20)
+    live_subparsers.add_parser(
+        "session-report", help="Read-only live shadow-evaluation evidence report"
+    )
     scheduler_parser = live_subparsers.add_parser(
         "run-scheduler", help="Run the paper-only cycle every N seconds during market hours"
     )
@@ -179,6 +221,11 @@ def main() -> None:
         "submit-approved", help="Submit one exact, unexpired plan previously reviewed in dry run"
     )
     submit_approved_parser.add_argument("--plan-id", required=True)
+    submit_approved_parser.add_argument(
+        "--arm-paper-execution",
+        action="store_true",
+        help="Deliberately arm this one CLI session for the exact reviewed paper plan",
+    )
 
     strategy_parser = subparsers.add_parser(
         "strategy", help="Deterministic local research commands"
@@ -194,15 +241,73 @@ def main() -> None:
     backtest_parser.add_argument("--initial-equity", type=float, default=100_000.0)
     backtest_parser.add_argument("--max-open-positions", type=int, default=3)
     backtest_parser.add_argument("--max-contracts-per-trade", type=int, default=1)
+    backtest_parser.add_argument("--fee-per-contract-usd", type=float, default=0.0)
+    backtest_parser.add_argument("--slippage-per-leg-usd", type=float, default=0.0)
+    backtest_parser.add_argument("--quote-derived-risk-free-rate", type=float, default=0.04)
+    backtest_parser.add_argument(
+        "--exit-horizon-minutes",
+        type=int,
+        choices=[15, 30, 60],
+        help="Optional fixed research exit horizon; never affects live execution",
+    )
+    walk_forward_parser = strategy_subparsers.add_parser(
+        "walk-forward", help="Offline point-in-time threshold study; never contacts execution"
+    )
+    walk_forward_parser.add_argument("--data-dir", default="data/normalized")
+    walk_forward_parser.add_argument("--symbols", required=True)
+    walk_forward_parser.add_argument("--start", required=True)
+    walk_forward_parser.add_argument("--end", required=True)
+    walk_forward_parser.add_argument("--thresholds", default="40,50,60,70")
+    walk_forward_parser.add_argument("--train-fraction", type=float, default=0.70)
+    walk_forward_parser.add_argument("--minimum-in-sample-trades", type=int, default=30)
+    walk_forward_parser.add_argument("--initial-equity", type=float, default=100_000.0)
+    walk_forward_parser.add_argument("--max-open-positions", type=int, default=3)
+    walk_forward_parser.add_argument("--max-contracts-per-trade", type=int, default=1)
+    walk_forward_parser.add_argument("--fee-per-contract-usd", type=float, default=0.0)
+    walk_forward_parser.add_argument("--slippage-per-leg-usd", type=float, default=0.0)
+    walk_forward_parser.add_argument("--quote-derived-risk-free-rate", type=float, default=0.04)
+    walk_forward_parser.add_argument(
+        "--exit-horizon-minutes",
+        type=int,
+        choices=[15, 30, 60],
+        help="Optional fixed research exit horizon; never affects live execution",
+    )
+    walk_forward_parser.add_argument(
+        "--output", default="results/walk_forward_threshold_study.json"
+    )
+    calibration_parser = strategy_subparsers.add_parser(
+        "calibrate-confidence",
+        help="Offline empirical score/regime calibration; never changes live settings",
+    )
+    calibration_parser.add_argument("--data-dir", default="data/normalized")
+    calibration_parser.add_argument("--symbols", required=True)
+    calibration_parser.add_argument("--start", required=True)
+    calibration_parser.add_argument("--end", required=True)
+    calibration_parser.add_argument("--minimum-score", type=int, default=40)
+    calibration_parser.add_argument("--minimum-observations-per-bucket", type=int, default=30)
+    calibration_parser.add_argument("--initial-equity", type=float, default=100_000.0)
+    calibration_parser.add_argument("--max-open-positions", type=int, default=3)
+    calibration_parser.add_argument("--max-contracts-per-trade", type=int, default=1)
+    calibration_parser.add_argument("--fee-per-contract-usd", type=float, default=0.0)
+    calibration_parser.add_argument("--slippage-per-leg-usd", type=float, default=0.0)
+    calibration_parser.add_argument("--quote-derived-risk-free-rate", type=float, default=0.04)
+    calibration_parser.add_argument(
+        "--exit-horizon-minutes",
+        type=int,
+        choices=[15, 30, 60],
+        help="Optional fixed research exit horizon; never affects live execution",
+    )
+    calibration_parser.add_argument("--output", default="results/confidence_calibration_study.json")
     compare_parser = strategy_subparsers.add_parser(
         "compare-scorers", help="Offline A/B comparison; never calls live data or execution"
     )
     compare_parser.add_argument("--fixture", required=True, help="Sanitized replay input JSON")
     compare_parser.add_argument("--output", default="results/conflict_scorer_ab.json")
-    replay_parser = subparsers.add_parser("replay")
-    replay_parser.add_argument("--fixture", required=True, help="Sanitized replay input JSON")
-    replay_parser.add_argument("--output", default="results/strategy_replay.json")
-    replay_parser.add_argument("--data-source", default="sanitized fixture")
+    replay_parser = subparsers.add_parser(
+        "replay", help="Run the deterministic credential-free SIMULATION_REPLAY lifecycle"
+    )
+    replay_parser.add_argument("--fixture", default="tests/fixtures/strategy_replay_sanitized.json")
+    replay_parser.add_argument("--output-dir", default="results/offline_demo")
     args = parser.parse_args()
     if args.command == "inspect-mcp":
         asyncio.run(_inspect_mcp())
@@ -211,6 +316,9 @@ def main() -> None:
             asyncio.run(_preflight())
         except RuntimeError as exc:
             parser.error(str(exc))
+    if args.command == "demo":
+        report = build_offline_demo(fixture=args.fixture, output_dir=args.output_dir)
+        print(json.dumps(report, indent=2))
     if args.command == "data" and args.data_command == "fetch-history":
         try:
             asyncio.run(_fetch_history(args))
@@ -230,6 +338,8 @@ def main() -> None:
         asyncio.run(_lifecycle_evidence())
     if args.command == "live" and args.live_command == "shadow-candidates":
         asyncio.run(_shadow_candidates(args.limit))
+    if args.command == "live" and args.live_command == "session-report":
+        asyncio.run(_shadow_session_report())
     if args.command == "live" and args.live_command == "run-scheduler":
         try:
             asyncio.run(_run_scheduler(args.interval_seconds, args.max_cycles))
@@ -237,7 +347,7 @@ def main() -> None:
             parser.error(str(exc))
     if args.command == "live" and args.live_command == "submit-approved":
         try:
-            asyncio.run(_submit_approved(args.plan_id))
+            asyncio.run(_submit_approved(args.plan_id, session_armed=args.arm_paper_execution))
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
     if args.command == "strategy" and args.strategy_command == "backtest":
@@ -251,6 +361,10 @@ def main() -> None:
             initial_equity=args.initial_equity,
             max_open_positions=args.max_open_positions,
             max_contracts_per_trade=args.max_contracts_per_trade,
+            fee_per_contract_usd=args.fee_per_contract_usd,
+            slippage_per_leg_usd=args.slippage_per_leg_usd,
+            quote_derived_risk_free_rate=args.quote_derived_risk_free_rate,
+            exit_horizon_minutes=args.exit_horizon_minutes,
         ).run()
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -269,15 +383,62 @@ def main() -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
+    if args.command == "strategy" and args.strategy_command == "walk-forward":
+        try:
+            thresholds = [
+                int(value.strip()) for value in args.thresholds.split(",") if value.strip()
+            ]
+            report = walk_forward_threshold_study(
+                args.data_dir,
+                symbols=_symbols(args.symbols),
+                start=datetime.fromisoformat(args.start),
+                end=datetime.fromisoformat(args.end),
+                thresholds=thresholds,
+                train_fraction=args.train_fraction,
+                minimum_in_sample_trades=args.minimum_in_sample_trades,
+                initial_equity=args.initial_equity,
+                max_open_positions=args.max_open_positions,
+                max_contracts_per_trade=args.max_contracts_per_trade,
+                fee_per_contract_usd=args.fee_per_contract_usd,
+                slippage_per_leg_usd=args.slippage_per_leg_usd,
+                quote_derived_risk_free_rate=args.quote_derived_risk_free_rate,
+                exit_horizon_minutes=args.exit_horizon_minutes,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2))
+    if args.command == "strategy" and args.strategy_command == "calibrate-confidence":
+        try:
+            backtest = HistoricalBacktester(
+                args.data_dir,
+                symbols=_symbols(args.symbols),
+                start=datetime.fromisoformat(args.start),
+                end=datetime.fromisoformat(args.end),
+                initial_equity=args.initial_equity,
+                max_open_positions=args.max_open_positions,
+                max_contracts_per_trade=args.max_contracts_per_trade,
+                score_threshold=args.minimum_score,
+                fee_per_contract_usd=args.fee_per_contract_usd,
+                slippage_per_leg_usd=args.slippage_per_leg_usd,
+                quote_derived_risk_free_rate=args.quote_derived_risk_free_rate,
+                exit_horizon_minutes=args.exit_horizon_minutes,
+            ).run()
+            report = confidence_calibration_study(
+                backtest,
+                minimum_observations_per_bucket=args.minimum_observations_per_bucket,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2))
     if args.command == "replay":
-        result = run_replay(load_observations(args.fixture))
-        write_report(
-            result,
-            Path(args.output),
-            data_source=args.data_source,
-            limitations=[
-                "This fixture validates deterministic accounting only.",
-                "It is not a claim of historical or live strategy performance.",
-            ],
+        print(
+            json.dumps(
+                build_offline_demo(fixture=args.fixture, output_dir=args.output_dir), indent=2
+            )
         )
-        print(json.dumps(result.summary.as_dict(), indent=2))

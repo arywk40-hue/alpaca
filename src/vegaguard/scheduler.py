@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx import HTTPError
@@ -27,6 +28,9 @@ class MarketHoursScheduler:
         *,
         interval_seconds: int = 900,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        session_id: str | None = None,
+        process_id: int | None = None,
     ):
         if interval_seconds < 60:
             raise ValueError("scheduler interval must be at least 60 seconds")
@@ -34,12 +38,32 @@ class MarketHoursScheduler:
         self.journal = journal
         self.interval_seconds = interval_seconds
         self.sleep = sleep
+        self.now = now
+        self.session_id = session_id
+        self.process_id = process_id
 
     async def run(self, *, max_cycles: int | None = None) -> list[dict[str, Any]]:
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be at least one")
         outcomes: list[dict[str, Any]] = []
         while max_cycles is None or len(outcomes) < max_cycles:
+            cycle_number = len(outcomes) + 1
+            started_at = self.now().astimezone(UTC)
+            self.journal.append(
+                JournalEntry(
+                    timestamp=started_at,
+                    event="scheduler_heartbeat",
+                    payload={
+                        "status": "running",
+                        "cycle_number": cycle_number,
+                        "interval_seconds": self.interval_seconds,
+                        "next_run_at": None,
+                        "session_id": self.session_id,
+                        "process_id": self.process_id,
+                        "last_cycle_started_at": started_at.isoformat(),
+                    },
+                )
+            )
             try:
                 lifecycle = None
                 manager = getattr(self.cycle, "manage_open_spreads", None)
@@ -57,6 +81,48 @@ class MarketHoursScheduler:
                 }
             outcomes.append(outcome)
             self.journal.append(JournalEntry(event="scheduled_cycle", payload=outcome))
-            if max_cycles is None or len(outcomes) < max_cycles:
+            should_continue = max_cycles is None or len(outcomes) < max_cycles
+            heartbeat_at = self.now().astimezone(UTC)
+            next_run_at = heartbeat_at + timedelta(seconds=self.interval_seconds)
+            cycle_failed = outcome.get("status") == "cycle_error"
+            market_open = self._market_open(outcome)
+            self.journal.append(
+                JournalEntry(
+                    timestamp=heartbeat_at,
+                    event="scheduler_heartbeat",
+                    payload={
+                        "status": "error"
+                        if cycle_failed
+                        else "waiting"
+                        if should_continue
+                        else "stopped",
+                        "cycle_number": cycle_number,
+                        "interval_seconds": self.interval_seconds,
+                        "last_cycle_status": outcome.get("status", "completed"),
+                        "last_error": outcome.get("reason") if cycle_failed else None,
+                        "next_run_at": next_run_at.isoformat() if should_continue else None,
+                        "session_id": self.session_id,
+                        "process_id": self.process_id,
+                        "last_cycle_started_at": started_at.isoformat(),
+                        "last_cycle_completed_at": heartbeat_at.isoformat(),
+                        "last_successful_cycle_at": None
+                        if cycle_failed
+                        else heartbeat_at.isoformat(),
+                        "market_open": market_open,
+                    },
+                )
+            )
+            if should_continue:
                 await self.sleep(self.interval_seconds)
         return outcomes
+
+    @staticmethod
+    def _market_open(outcome: dict[str, Any]) -> bool | None:
+        entry = (
+            outcome.get("entry_cycle") if isinstance(outcome.get("entry_cycle"), dict) else outcome
+        )
+        if entry.get("reason") == "market_closed" or entry.get("status") == "market_closed":
+            return False
+        if entry.get("status") == "cycle_error":
+            return None
+        return True

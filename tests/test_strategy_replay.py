@@ -29,6 +29,7 @@ def test_replay_orders_events_without_using_future_observations(tmp_path):
     assert len(result.decisions) == 2
     assert len(result.trades) == 1
     assert result.summary.net_pnl == 95
+    assert result.summary.expectancy_usd_per_trade == 95
     report_path = tmp_path / "baseline.json"
     write_report(
         result, report_path, data_source="sanitized fixture", limitations=["Synthetic fixture only"]

@@ -51,13 +51,22 @@ class PaperPreflight:
         )
         tool_names = sorted(str(schema.get("name")) for schema in schemas if schema.get("name"))
         missing_tools = sorted(self.required_mcp_tools - set(tool_names))
+        configured_account_id = self.settings.alpaca_account_id
+        provider_account_id = str(account.get("id")) if account.get("id") is not None else None
+        account_id_matches = (
+            provider_account_id == configured_account_id if configured_account_id else None
+        )
         return {
-            "status": "ready" if not missing_tools else "incomplete",
+            "status": "ready"
+            if not missing_tools and account_id_matches is not False
+            else "incomplete",
             "checked_at": datetime.now(UTC).isoformat(),
             "paper_only": True,
             "rest": {
                 "account_status": account.get("status"),
                 "account_id_present": bool(account.get("id")),
+                "configured_account_id": configured_account_id,
+                "account_id_matches_configuration": account_id_matches,
                 "market_open": bool(clock.get("is_open")),
             },
             "market_data": {

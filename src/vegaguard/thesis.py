@@ -45,7 +45,7 @@ class DeterministicThesisAgent:
 
 
 class OpenAIThesisAgent:
-    """Generates a narrow, reviewable trade-or-skip thesis from supplied market evidence."""
+    """Generates a narrow, reviewable advisory from supplied market evidence."""
 
     def __init__(self, settings: Settings):
         if not settings.openai_api_key:
@@ -59,7 +59,9 @@ class OpenAIThesisAgent:
         prompt = f"""You are the research agent in a paper-options system. Return ONLY valid JSON matching:
 {{"action":"trade|skip","confidence":0..1,"rationale":"...","invalidation":"...","candidate_symbol":"..."}}
 
-You may only assess the given option candidate. Never invent market data, contracts, or price targets. Prefer skip when evidence is weak. You are not permitted to choose position size or bypass risk checks.
+You may only assess the given option candidate. Never invent market data, contracts, or price targets.
+The action is an advisory label only: it cannot approve, veto, size, price, or submit a trade. The
+deterministic scanner, spread validator, and risk gate make those decisions independently.
 
 Opportunity:\n{json.dumps(opportunity.model_dump(), default=str)}"""
         response = await self.client.responses.create(
