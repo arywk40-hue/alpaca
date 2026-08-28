@@ -61,11 +61,17 @@ MCP process must not have received an order in this mode.
 
 ## 4. Dedicated paper-order acceptance
 
-Only after reviewing the dry-run payload, set `DRY_RUN=false`. Run a single bounded cycle; the
-application can submit only a paper, defined-risk debit spread and has a unique client order ID.
-Record the MCP receipt and the Alpaca paper order ID in the journal.
+Only after reviewing the dry-run payload, set `DRY_RUN=false`. Do not rerun the scheduler to submit: it never submits an entry and a new cycle might choose different legs. Submit the exact unexpired plan through the dashboard after typing the arm confirmation, or use the one-session CLI arm:
 
-Use the monitor in a separate terminal:
+```bash
+vegaguard live submit-approved \
+  --plan-id vg-plan-REPLACE_WITH_REVIEWED_ID \
+  --arm-paper-execution
+```
+
+The application re-quotes the exact legs and can submit only a paper, defined-risk debit spread with a unique client order ID. Record the MCP receipt and Alpaca paper order ID in the journal.
+
+The dashboard-managed worker owns the update monitor. This standalone command is a fallback:
 
 ```bash
 vegaguard live monitor-trade-updates

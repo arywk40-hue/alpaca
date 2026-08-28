@@ -11,6 +11,7 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
 - **MCP:** `uvx alpaca-mcp-server` is launched as a stdio MCP server; available tool schemas are discovered dynamically at runtime.
 - **Options:** only option contracts can form a `TradePlan`; the execution adapter calls `place_option_order`.
 - **Paper only:** the MCP environment is hard-wired to `ALPACA_PAPER_TRADE=true`. This project refuses an execution attempt if that is not true.
+- **LLM boundary:** optional OpenAI output is journaled as an explanation/advisory only; deterministic scanner, spread, and risk gates—not the model—control whether a plan exists.
 
 ## First-run setup
 
@@ -20,6 +21,8 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
    ```bash
    cp .env.example .env
    ```
+
+   `ALPACA_ACCOUNT_ID` is optional in local development and is the secret-free identifier used for the final submission. Preflight verifies it against the paper account when supplied.
 
 3. Create a virtual environment and install the project:
 
@@ -49,14 +52,37 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
 
 6. Once paper credentials and the MCP schema are verified, set `ALLOW_ORDER_EXECUTION=true`. The risk gate still blocks non-paper, illiquid, near-expiry, over-sized, or duplicate trades.
 
+### Credential-free demo bundle
+
+Generate a reviewer-friendly bundle without credentials, network access, or execution capability:
+
+```bash
+vegaguard replay --output-dir results/offline_demo
+```
+
+It writes the deterministic replay, offline scorer/threshold comparison, and a
+`SIMULATION_REPLAY` lifecycle showing scan → candidate → risk decision → simulated
+entry → 15/30-minute monitoring → simulated 60-minute exit. Every artifact is
+fixture-only; paper-order counters remain zero. This is a reproducible code-path
+demo—not historical or paper-trading proof.
+
+### Dashboard-managed operation
+
+Start the API once; it owns the scheduler worker and stops it cleanly with the
+server. No separate scheduler terminal is needed:
+
+```bash
+PYTHONPATH=src uvicorn vegaguard.api:app --host 127.0.0.1 --port 8000
+```
+
+The dashboard has controls for **Start Shadow Agent**, **Stop Agent**, **Start Simulation Replay**, **Arm/Disarm Paper Execution**, and **Emergency Stop**. It streams durable journal updates through SSE at `/events`; the backend also owns the paper trade-update monitor when credentials are configured. Shadow scans and simulations cannot submit an order. Paper submission requires all backend flags, a deliberate typed session arm, and a manually entered exact unexpired `plan_id`; that one-attempt arm is then consumed. The backend rechecks market, exact-leg quote freshness and price drift, liquidity, buying power, position limits and risk. Credentials are never returned to the browser.
+
 ### Deterministic replay
 
 This uses only a sanitized fixture and validates the scoring and accounting path. It is **not** a historical-performance claim.
 
 ```bash
-vegaguard replay \
-  --fixture tests/fixtures/strategy_replay_sanitized.json \
-  --output results/strategy_replay.json
+vegaguard replay
 ```
 
 ### Offline scorer A/B research
@@ -90,15 +116,79 @@ vegaguard strategy backtest \
   --output results/historical_strategy_backtest.json
 ```
 
+The historical replay enters at long-ask/short-bid and exits at long-bid/short-ask. Optional,
+explicit research assumptions are additive and reported separately from that observed bid/ask cost:
+
+```bash
+vegaguard strategy backtest ... \
+  --fee-per-contract-usd 1.00 \
+  --slippage-per-leg-usd 0.25
+```
+
+Fees are charged once at entry and once at exit per contract; slippage covers all four option-leg
+transactions in a complete debit-spread lifecycle. Neither parameter affects live orders.
+
+For a fixed-horizon, point-in-time research comparison, add
+`--exit-horizon-minutes 15`, `30`, or `60`. The replay uses the first fresh option
+quote event at or after that horizon and labels the exit accordingly. It has no live
+execution effect.
+
 The replay rejects data observed after the decision timestamp, incomplete contract metadata,
 stale/missing quotes or Greeks, and missing IV history. It will label output
 `STOCK-SIGNAL-ONLY ANALYSIS` and **inconclusive** rather than claim option P&L if the normalized
 inputs cannot support a real point-in-time option backtest. Alpaca's historical option data starts
 in February 2024; free indicative data is delayed and modified relative to OPRA.
 
+Each historical result reports win rate, profit factor, maximum drawdown, net expectancy per
+completed trade, and the missing-data rate across decision attempts. Walk-forward reports compare
+the same metrics at research thresholds 40, 50, 60, and 70; none changes the live threshold.
+
 See [historical data limitations](docs/HISTORICAL_DATA_LIMITATIONS.md) for the current snapshot/IV
 and contract-metadata boundary. The fetcher derives static OCC metadata only from a historical
 quote that proves the contract existed at the decision time.
+
+### Offline confidence calibration
+
+Score strength is not a probability. Once a genuine normalized historical options cache contains
+enough completed trades, VegaGuard can report empirical win-rate and net-P&L buckets by score and
+regime. This is research-only: it cannot alter the production score of 70, sizing, risk gates, or
+execution settings.
+
+```bash
+vegaguard strategy calibrate-confidence \
+  --data-dir data/normalized \
+  --symbols SPY,QQQ,IWM \
+  --start 2025-01-01T00:00:00+00:00 \
+  --end 2025-03-31T23:59:59+00:00 \
+  --minimum-score 40
+```
+
+The command reports `insufficient_real_historical_evidence` unless the input is a genuine
+point-in-time option backtest and a score/regime bucket reaches its configured sample minimum.
+
+### Offline walk-forward threshold research
+
+The live scanner remains fixed at 70. A historical cache can be evaluated at explicit research
+thresholds only through a chronological train/test split; the later interval is held out from
+selection and the command cannot access account, MCP, or execution code:
+
+```bash
+vegaguard strategy walk-forward \
+  --data-dir data/normalized \
+  --symbols SPY,QQQ,IWM \
+  --start 2025-01-01T00:00:00+00:00 \
+  --end 2025-03-31T23:59:59+00:00 \
+  --thresholds 40,50,60,70 \
+  --minimum-in-sample-trades 30
+```
+
+It selects a threshold only from real, sufficiently sized in-sample option evidence, then reports
+the selected threshold's held-out performance. It never promotes that result into production; a
+human must separately review out-of-sample drawdown, fill assumptions, and execution risk.
+
+Live shadow evidence also records research-only IV percentile, put/call skew, and term-structure
+features when the append-only observed IV history and fresh option chain are sufficient. They remain
+`null` when unavailable and do not alter production scoring or risk gates.
 
 ### Read-only paper-account verification
 
@@ -160,13 +250,13 @@ vegaguard live run-scheduler --interval-seconds 900 --max-cycles 1
 uvicorn vegaguard.api:app --reload
 ```
 
-Open `http://127.0.0.1:8000/` for the demo dashboard. It contains no trade controls: it shows the
-journal, immutable selected-vs-no-trade shadow records, and completed audit deltas. Every
-gate-approved plan receives a shadow record before the executor can emit its dry-run or MCP result.
+Open `http://127.0.0.1:8000/` for the demo dashboard. It shows the journal, shadow evidence, plan/order/fill counters, lifecycle P&L and backend controls. Controls cannot alter environment safety flags or bypass any deterministic gate. Every gate-approved plan receives a shadow record before the executor can emit its dry-run result.
 
-When paper execution is separately authorized, retain `DRY_RUN=true` first. VegaGuard will journal
-the exact validated `mleg` payload without calling MCP. Only after that output is reviewed should a
-paper-only operator set `DRY_RUN=false`. At each scheduled market-hours cycle, the guardian checks
+The dashboard's scheduler card is a durable liveness signal, not a trade control: `waiting`,
+`running`, `stopped`, `never_started`, and `stale` are derived from journaled heartbeat events. A
+continuous scheduler becomes `stale` if it misses two scheduled intervals plus one minute.
+
+When paper execution is separately authorized, retain `DRY_RUN=true` first. VegaGuard journals the exact validated `mleg` payload without calling MCP. After review, the dashboard path additionally requires its explicit session arm; a scheduler cycle still cannot submit an entry directly. At each scheduled market-hours cycle, the guardian checks
 filled, journaled spreads against conservative long-bid/short-ask exit value. A profit, stop, time,
 or expiry trigger can create only an atomic reversed-leg close order (`sell_to_close` plus
 `buy_to_close`); it follows the same execution and dry-run gates as entry. The trade-update monitor
@@ -205,6 +295,7 @@ without ever enabling live trading.
 - [Strategy and risk rules](docs/STRATEGY.md)
 - [Operator runbook](docs/OPERATOR_RUNBOOK.md)
 - [Hackathon demo](docs/HACKATHON_DEMO.md)
+- [Hackathon submission package](docs/HACKATHON_SUBMISSION.md)
 - [Master Alpaca hackathon reference](docs/ALPACA_HACKATHON_MASTER.md)
 - [P&L trading strategy](docs/TRADING_STRATEGY.md)
 - [Architecture and implementation plan](docs/ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md)
