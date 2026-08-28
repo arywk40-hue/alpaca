@@ -6,10 +6,12 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from secrets import compare_digest
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from .config import get_settings
@@ -21,6 +23,9 @@ from .mcp_client import AlpacaMCPClient
 from .monitoring import OrderLifecycle
 from .preflight import PaperPreflight
 from .service import AutonomousCycle
+
+_DASHBOARD_BEARER = HTTPBearer(auto_error=False)
+_DASHBOARD_CREDENTIALS = Depends(_DASHBOARD_BEARER)
 
 
 class StartShadowRequest(BaseModel):
@@ -50,6 +55,28 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
 
     def agent(request: Request) -> DashboardAgentController:
         return request.app.state.controller
+
+    async def require_dashboard_token(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = _DASHBOARD_CREDENTIALS,
+    ) -> None:
+        """Keep dashboard mutations locked unless the backend token matches.
+
+        The configured token is read from the controller's settings factory so
+        the API and controller share one configuration source.  Failure details
+        intentionally do not distinguish an absent server token from an
+        invalid request token and never include either value.
+        """
+
+        configured = agent(request).settings_factory().dashboard_bearer_token
+        expected = configured.get_secret_value() if configured else ""
+        provided = credentials.credentials if credentials else ""
+        if not expected or not provided or not compare_digest(provided, expected):
+            raise HTTPException(
+                status_code=401,
+                detail="dashboard bearer token required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     @api.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -87,15 +114,15 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
             "agent": controller_instance.status(),
         }
 
-    @api.post("/agent/shadow/start")
+    @api.post("/agent/shadow/start", dependencies=[Depends(require_dashboard_token)])
     async def start_shadow(request: Request, body: StartShadowRequest) -> dict:
         return await agent(request).start_shadow(interval_seconds=body.interval_seconds)
 
-    @api.post("/agent/shadow/stop")
+    @api.post("/agent/shadow/stop", dependencies=[Depends(require_dashboard_token)])
     async def stop_shadow(request: Request) -> dict:
         return await agent(request).stop_shadow()
 
-    @api.post("/agent/simulation/start")
+    @api.post("/agent/simulation/start", dependencies=[Depends(require_dashboard_token)])
     async def start_simulation(request: Request) -> dict:
         return await agent(request).start_simulation()
 
@@ -103,25 +130,25 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
     async def agent_status(request: Request) -> dict:
         return agent(request).status()
 
-    @api.post("/agent/paper/submit-approved")
+    @api.post("/agent/paper/submit-approved", dependencies=[Depends(require_dashboard_token)])
     async def submit_approved(request: Request, body: SubmitPlanRequest) -> dict:
         result = await agent(request).submit_approved_plan(body.plan_id)
         if result.get("status") == "blocked":
             raise HTTPException(status_code=409, detail=result)
         return result
 
-    @api.post("/agent/paper/arm")
+    @api.post("/agent/paper/arm", dependencies=[Depends(require_dashboard_token)])
     async def arm_paper(request: Request, body: ArmPaperRequest) -> dict:
         result = await agent(request).arm_paper_execution(body.confirmation)
         if result.get("status") == "blocked":
             raise HTTPException(status_code=409, detail=result)
         return result
 
-    @api.post("/agent/paper/disarm")
+    @api.post("/agent/paper/disarm", dependencies=[Depends(require_dashboard_token)])
     async def disarm_paper(request: Request) -> dict:
         return await agent(request).disarm_paper_execution()
 
-    @api.post("/agent/emergency-stop")
+    @api.post("/agent/emergency-stop", dependencies=[Depends(require_dashboard_token)])
     async def emergency_stop(request: Request) -> dict:
         return await agent(request).emergency_stop()
 
@@ -153,7 +180,7 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
 
     # Legacy diagnostic routes retain their previous behavior. The execution
     # agent now returns an approval-required preview instead of direct submit.
-    @api.post("/cycle/run")
+    @api.post("/cycle/run", dependencies=[Depends(require_dashboard_token)])
     async def run_cycle() -> dict:
         settings = get_settings()
         journal = DecisionJournal()
@@ -174,7 +201,7 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
         executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
         return await AutonomousCycle(settings, executor).reconcile_orders(OrderLifecycle(journal))
 
-    @api.post("/lifecycle/manage")
+    @api.post("/lifecycle/manage", dependencies=[Depends(require_dashboard_token)])
     async def manage_lifecycle() -> dict:
         settings = get_settings()
         journal = DecisionJournal()

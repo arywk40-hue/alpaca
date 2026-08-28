@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     alpaca_toolsets: str = "account,trading,assets,stock-data,options-data"
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5-mini"
+    # Backend-only bearer token for dashboard mutations.  Keep this out of
+    # responses, browser markup, and journal payloads; an unset value keeps
+    # every mutating API route locked.
+    dashboard_bearer_token: SecretStr | None = None
     allow_order_execution: bool = False
     dry_run: bool = True
     # Exploration is a separately-labelled, paper-only experiment. It cannot

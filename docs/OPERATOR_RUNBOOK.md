@@ -9,7 +9,36 @@ ALLOW_ORDER_EXECUTION=false
 DRY_RUN=true
 EXPLORATION_MODE=false
 EXPLORATION_SCORE_THRESHOLD=40
+DASHBOARD_BEARER_TOKEN=
 ```
+
+## Dashboard API authentication
+
+The dashboard page and read-only endpoints remain available for inspection. Every mutating
+dashboard/API route is locked behind the backend-only `DASHBOARD_BEARER_TOKEN` setting:
+
+`/agent/shadow/start`, `/agent/shadow/stop`, `/agent/simulation/start`, `/agent/paper/arm`,
+`/agent/paper/disarm`, `/agent/paper/submit-approved`, `/agent/emergency-stop`, `/cycle/run`,
+and `/lifecycle/manage`.
+
+Send the token only in an HTTPS request `Authorization: Bearer …` header from a trusted operator
+client. Requests with a missing, unset, or incorrect token receive `401 Unauthorized`. The API never
+returns the configured value, and the dashboard HTML does not contain it. Keep the value in the
+backend process environment or an equivalent secret manager; do not paste it into source, logs,
+journal entries, screenshots, or Git. For example, with the value already present in the current
+shell environment:
+
+```bash
+curl -H "Authorization: Bearer ${DASHBOARD_BEARER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"interval_seconds":900}' \
+  http://127.0.0.1:8000/agent/shadow/start
+```
+
+Do not put the token in dashboard JavaScript or a URL. If a browser needs to operate these controls,
+use an authenticated reverse proxy or another trusted mechanism that injects the header without
+exposing the secret to the page. Read-only routes such as `/`, `/health`, `/preflight`,
+`/dashboard/state`, `/events`, `/journal`, and `/agent/status` do not require this bearer token.
 
 `OPENAI_API_KEY` is optional. Without it, a local deterministic bounded thesis is used.
 

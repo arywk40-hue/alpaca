@@ -10,6 +10,9 @@ from vegaguard.controller import DashboardAgentController
 from vegaguard.journal import DecisionJournal
 from vegaguard.models import JournalEntry
 
+TEST_DASHBOARD_TOKEN = "dashboard-test-token"
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_DASHBOARD_TOKEN}"}
+
 
 class BlockingScheduler:
     def __init__(self, *_args, **_kwargs):
@@ -34,7 +37,7 @@ class BlockingTradeUpdateMonitor:
 def _controller(tmp_path, *, settings: Settings | None = None, demo_builder=None):
     return DashboardAgentController(
         journal=DecisionJournal(tmp_path / "journal.jsonl"),
-        settings_factory=lambda: settings or Settings(),
+        settings_factory=lambda: settings or Settings(dashboard_bearer_token=TEST_DASHBOARD_TOKEN),
         cycle_factory=lambda *_args: ClosedCycle(),
         scheduler_factory=BlockingScheduler,
         demo_builder=demo_builder or (lambda **_kwargs: {"mode": "offline_reproducible_demo"}),
@@ -192,19 +195,29 @@ def test_dashboard_routes_manage_the_backend_controller_lifecycle(tmp_path):
         state = client.get("/dashboard/state")
         assert state.status_code == 200
         assert state.json()["agent"]["paper_execution"]["locked"] is True
-        started = client.post("/agent/shadow/start", json={"interval_seconds": 60})
+        started = client.post(
+            "/agent/shadow/start", json={"interval_seconds": 60}, headers=AUTH_HEADERS
+        )
         assert started.status_code == 200
         assert started.json()["status"] == "started"
-        stopped = client.post("/agent/shadow/stop")
+        stopped = client.post("/agent/shadow/stop", headers=AUTH_HEADERS)
         assert stopped.status_code == 200
         assert stopped.json()["scheduler"]["status"] == "stopped"
-        blocked = client.post("/agent/paper/submit-approved", json={"plan_id": "vg-plan-locked"})
+        blocked = client.post(
+            "/agent/paper/submit-approved",
+            json={"plan_id": "vg-plan-locked"},
+            headers=AUTH_HEADERS,
+        )
         assert blocked.status_code == 409
         assert blocked.json()["detail"]["status"] == "blocked"
-        arm = client.post("/agent/paper/arm", json={"confirmation": "ARM PAPER EXECUTION"})
+        arm = client.post(
+            "/agent/paper/arm",
+            json={"confirmation": "ARM PAPER EXECUTION"},
+            headers=AUTH_HEADERS,
+        )
         assert arm.status_code == 409
-        assert client.post("/agent/paper/disarm").status_code == 200
-        emergency = client.post("/agent/emergency-stop")
+        assert client.post("/agent/paper/disarm", headers=AUTH_HEADERS).status_code == 200
+        emergency = client.post("/agent/emergency-stop", headers=AUTH_HEADERS)
         assert emergency.status_code == 200
         assert emergency.json()["paper_execution"]["emergency_stop_active"] is True
 
@@ -212,6 +225,70 @@ def test_dashboard_routes_manage_the_backend_controller_lifecycle(tmp_path):
 def test_server_lifespan_stops_a_running_dashboard_worker(tmp_path):
     controller = _controller(tmp_path)
     with TestClient(create_app(controller=controller)) as client:
-        assert client.post("/agent/shadow/start", json={"interval_seconds": 60}).status_code == 200
+        assert (
+            client.post(
+                "/agent/shadow/start", json={"interval_seconds": 60}, headers=AUTH_HEADERS
+            ).status_code
+            == 200
+        )
     assert controller.status()["controller_running"] is False
     assert controller.status()["scheduler"]["status"] == "stopped"
+
+
+@pytest.mark.parametrize(
+    ("path", "json"),
+    [
+        ("/agent/shadow/start", {"interval_seconds": 60}),
+        ("/agent/shadow/stop", None),
+        ("/agent/simulation/start", None),
+        ("/agent/paper/arm", {"confirmation": "ARM PAPER EXECUTION"}),
+        ("/agent/paper/disarm", None),
+        ("/agent/paper/submit-approved", {"plan_id": "vg-plan-test"}),
+        ("/agent/emergency-stop", None),
+        ("/cycle/run", None),
+        ("/lifecycle/manage", None),
+    ],
+)
+def test_mutating_routes_reject_missing_and_incorrect_dashboard_tokens(tmp_path, path, json):
+    controller = _controller(tmp_path)
+    with TestClient(create_app(controller=controller)) as client:
+        missing = client.post(path, json=json)
+        incorrect = client.post(
+            path,
+            json=json,
+            headers={"Authorization": "Bearer wrong-dashboard-token"},
+        )
+
+    assert missing.status_code == 401
+    assert incorrect.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert missing.json()["detail"] == "dashboard bearer token required"
+    assert "wrong-dashboard-token" not in missing.text
+    assert "wrong-dashboard-token" not in incorrect.text
+
+
+def test_mutating_route_accepts_the_configured_dashboard_token(tmp_path):
+    controller = _controller(tmp_path)
+    with TestClient(create_app(controller=controller)) as client:
+        response = client.post("/agent/paper/disarm", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "disarmed"
+    assert TEST_DASHBOARD_TOKEN not in response.text
+
+
+def test_mutating_route_stays_locked_when_server_token_is_unset(tmp_path):
+    controller = _controller(tmp_path, settings=Settings())
+    with TestClient(create_app(controller=controller)) as client:
+        response = client.post("/agent/paper/disarm", headers=AUTH_HEADERS)
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "dashboard bearer token required"
+
+
+def test_read_only_dashboard_routes_remain_public(tmp_path):
+    controller = _controller(tmp_path)
+    with TestClient(create_app(controller=controller)) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/dashboard/state").status_code == 200
+        assert client.get("/agent/status").status_code == 200
