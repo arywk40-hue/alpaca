@@ -1,0 +1,242 @@
+{
+  "mode": "SIMULATION_REPLAY",
+  "source": "sanitized_fixture",
+  "events": [
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "scan",
+      "score": 100,
+      "regime": "bullish",
+      "reasons": []
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "candidate",
+      "status": "constructed",
+      "strategy": "defined_risk_debit_spread",
+      "long_symbol": "SIM-SPY-LONG-001",
+      "short_symbol": "SIM-SPY-SHORT-001",
+      "width": 5.0,
+      "quantity": 1,
+      "entry_debit": 1.3,
+      "max_loss_usd": 130.0,
+      "quote_economics": {
+        "entry": {
+          "long_ask": 1.8,
+          "short_bid": 0.5
+        },
+        "exit": {
+          "long_bid": 2.8,
+          "short_ask": 0.4
+        }
+      }
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "risk_decision",
+      "status": "approved",
+      "maximum_risk_usd": 500.0,
+      "required_max_loss_usd": 130.0,
+      "comparison": "130.00 <= 500.00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "simulated_order",
+      "status": "simulated_not_submitted",
+      "paper_order_submitted": false
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "simulated_fill",
+      "status": "simulated",
+      "entry_debit": 1.3,
+      "pnl_label": "HYPOTHETICAL",
+      "paper_order_submitted": false
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "simulated_monitoring",
+      "status": "pending_simulated_reprice",
+      "simulated_at": "2026-08-25T10:15:00+00:00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "simulated_monitoring",
+      "status": "pending_simulated_reprice",
+      "simulated_at": "2026-08-25T10:30:00+00:00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:00:00+00:00",
+      "symbol": "SPY",
+      "stage": "simulated_exit",
+      "status": "simulated",
+      "simulated_at": "2026-08-25T11:00:00+00:00",
+      "exit_credit": 2.4,
+      "gross_simulated_pnl": 110.0,
+      "costs": 5.0,
+      "net_simulated_pnl": 105.0,
+      "pnl_label": "HYPOTHETICAL",
+      "paper_order_submitted": false,
+      "realized_paper_pnl": null
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:15:00+00:00",
+      "symbol": "QQQ",
+      "stage": "scan",
+      "score": 0,
+      "regime": "neutral",
+      "reasons": [
+        "daily and intraday regimes are not aligned",
+        "score or agreement threshold was not met"
+      ]
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:15:00+00:00",
+      "symbol": "QQQ",
+      "stage": "candidate",
+      "status": "rejected",
+      "reason": "simulated scan did not meet directional threshold"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "scan",
+      "score": -100,
+      "regime": "bearish",
+      "reasons": [
+        "market direction conflicts with the candidate"
+      ]
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "candidate",
+      "status": "constructed",
+      "strategy": "defined_risk_debit_spread",
+      "long_symbol": "SIM-IWM-LONG-001",
+      "short_symbol": "SIM-IWM-SHORT-001",
+      "width": 5.0,
+      "quantity": 1,
+      "entry_debit": 1.5,
+      "max_loss_usd": 150.0,
+      "quote_economics": {
+        "entry": {
+          "long_ask": 2.3,
+          "short_bid": 0.8
+        },
+        "exit": {
+          "long_bid": 1.6,
+          "short_ask": 0.7
+        }
+      }
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "risk_decision",
+      "status": "approved",
+      "maximum_risk_usd": 500.0,
+      "required_max_loss_usd": 150.0,
+      "comparison": "150.00 <= 500.00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "simulated_order",
+      "status": "simulated_not_submitted",
+      "paper_order_submitted": false
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "simulated_fill",
+      "status": "simulated",
+      "entry_debit": 1.5,
+      "pnl_label": "HYPOTHETICAL",
+      "paper_order_submitted": false
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "simulated_monitoring",
+      "status": "pending_simulated_reprice",
+      "simulated_at": "2026-08-25T10:45:00+00:00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "simulated_monitoring",
+      "status": "pending_simulated_reprice",
+      "simulated_at": "2026-08-25T11:00:00+00:00"
+    },
+    {
+      "mode": "SIMULATION_REPLAY",
+      "source": "sanitized_fixture",
+      "timestamp": "2026-08-25T10:30:00+00:00",
+      "symbol": "IWM",
+      "stage": "simulated_exit",
+      "status": "simulated",
+      "simulated_at": "2026-08-25T11:30:00+00:00",
+      "exit_credit": 0.9,
+      "gross_simulated_pnl": -60.0,
+      "costs": 5.0,
+      "net_simulated_pnl": -65.0,
+      "pnl_label": "HYPOTHETICAL",
+      "paper_order_submitted": false,
+      "realized_paper_pnl": null
+    }
+  ],
+  "simulated_plan_count": 2,
+  "simulated_exit_count": 2,
+  "paper_trade_counters": {
+    "submitted": 0,
+    "acknowledged": 0,
+    "filled": 0,
+    "realized": 0
+  },
+  "limitations": [
+    "All events, option legs, quotes, and P&L are fixture-defined simulation values.",
+    "No Alpaca request, MCP call, journal mutation, or order submission occurred."
+  ]
+}

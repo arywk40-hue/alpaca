@@ -1,0 +1,183 @@
+{
+  "mode": "offline_research_only",
+  "live_execution": "disabled_by_design",
+  "observations": 3,
+  "baseline": {
+    "trade_count": 2,
+    "performance": {
+      "trade_count": 2,
+      "gross_pnl": 50.0,
+      "costs": 10.0,
+      "net_pnl": 40.0,
+      "expectancy_usd_per_trade": 20.0,
+      "win_rate": 0.5,
+      "average_win": 105.0,
+      "average_loss": -65.0,
+      "profit_factor": 1.6154,
+      "max_drawdown": -65.0,
+      "per_symbol_net_pnl": {
+        "SPY": 105.0,
+        "IWM": -65.0
+      }
+    },
+    "regime_distribution": {
+      "bearish": 1,
+      "bullish": 1,
+      "neutral": 1
+    },
+    "rejection_reasons": {
+      "daily and intraday regimes are not aligned": 1,
+      "score or agreement threshold was not met": 1
+    }
+  },
+  "conflict_tolerant": {
+    "trade_count": 2,
+    "performance": {
+      "trade_count": 2,
+      "gross_pnl": 50.0,
+      "costs": 10.0,
+      "net_pnl": 40.0,
+      "expectancy_usd_per_trade": 20.0,
+      "win_rate": 0.5,
+      "average_win": 105.0,
+      "average_loss": -65.0,
+      "profit_factor": 1.6154,
+      "max_drawdown": -65.0,
+      "per_symbol_net_pnl": {
+        "SPY": 105.0,
+        "IWM": -65.0
+      }
+    },
+    "regime_distribution": {
+      "bearish": 1,
+      "bullish": 1,
+      "neutral": 1
+    },
+    "rejection_reasons": {
+      "conflict score or independent-confirmation threshold was not met": 1,
+      "daily and intraday regimes conflict; daily trend is provisional with a 5-point penalty": 1,
+      "volatility state is not favourable": 1,
+      "volume confirmation is absent": 1
+    }
+  },
+  "threshold_comparison": {
+    "40": {
+      "trade_count": 2,
+      "performance": {
+        "trade_count": 2,
+        "gross_pnl": 50.0,
+        "costs": 10.0,
+        "net_pnl": 40.0,
+        "expectancy_usd_per_trade": 20.0,
+        "win_rate": 0.5,
+        "average_win": 105.0,
+        "average_loss": -65.0,
+        "profit_factor": 1.6154,
+        "max_drawdown": -65.0,
+        "per_symbol_net_pnl": {
+          "SPY": 105.0,
+          "IWM": -65.0
+        }
+      },
+      "regime_distribution": {
+        "bearish": 1,
+        "bullish": 1,
+        "neutral": 1
+      },
+      "rejection_reasons": {
+        "daily and intraday regimes are not aligned": 1,
+        "score or agreement threshold was not met": 1
+      }
+    },
+    "50": {
+      "trade_count": 2,
+      "performance": {
+        "trade_count": 2,
+        "gross_pnl": 50.0,
+        "costs": 10.0,
+        "net_pnl": 40.0,
+        "expectancy_usd_per_trade": 20.0,
+        "win_rate": 0.5,
+        "average_win": 105.0,
+        "average_loss": -65.0,
+        "profit_factor": 1.6154,
+        "max_drawdown": -65.0,
+        "per_symbol_net_pnl": {
+          "SPY": 105.0,
+          "IWM": -65.0
+        }
+      },
+      "regime_distribution": {
+        "bearish": 1,
+        "bullish": 1,
+        "neutral": 1
+      },
+      "rejection_reasons": {
+        "daily and intraday regimes are not aligned": 1,
+        "score or agreement threshold was not met": 1
+      }
+    },
+    "60": {
+      "trade_count": 2,
+      "performance": {
+        "trade_count": 2,
+        "gross_pnl": 50.0,
+        "costs": 10.0,
+        "net_pnl": 40.0,
+        "expectancy_usd_per_trade": 20.0,
+        "win_rate": 0.5,
+        "average_win": 105.0,
+        "average_loss": -65.0,
+        "profit_factor": 1.6154,
+        "max_drawdown": -65.0,
+        "per_symbol_net_pnl": {
+          "SPY": 105.0,
+          "IWM": -65.0
+        }
+      },
+      "regime_distribution": {
+        "bearish": 1,
+        "bullish": 1,
+        "neutral": 1
+      },
+      "rejection_reasons": {
+        "daily and intraday regimes are not aligned": 1,
+        "score or agreement threshold was not met": 1
+      }
+    },
+    "70": {
+      "trade_count": 2,
+      "performance": {
+        "trade_count": 2,
+        "gross_pnl": 50.0,
+        "costs": 10.0,
+        "net_pnl": 40.0,
+        "expectancy_usd_per_trade": 20.0,
+        "win_rate": 0.5,
+        "average_win": 105.0,
+        "average_loss": -65.0,
+        "profit_factor": 1.6154,
+        "max_drawdown": -65.0,
+        "per_symbol_net_pnl": {
+          "SPY": 105.0,
+          "IWM": -65.0
+        }
+      },
+      "regime_distribution": {
+        "bearish": 1,
+        "bullish": 1,
+        "neutral": 1
+      },
+      "rejection_reasons": {
+        "daily and intraday regimes are not aligned": 1,
+        "score or agreement threshold was not met": 1
+      }
+    }
+  },
+  "out_of_sample_assessment": "unavailable: no normalized historical option dataset was supplied",
+  "limitations": [
+    "The experimental scorer is not connected to the live scanner or execution path.",
+    "Replay output is not evidence of future or live performance.",
+    "Do not promote this scorer without a separate, point-in-time out-of-sample backtest."
+  ]
+}

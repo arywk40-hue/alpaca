@@ -1,0 +1,27 @@
+{
+  "data_source": "sanitized fixture",
+  "observations": 3,
+  "trades": 2,
+  "no_trade_count": 1,
+  "performance": {
+    "trade_count": 2,
+    "gross_pnl": 50.0,
+    "costs": 10.0,
+    "net_pnl": 40.0,
+    "expectancy_usd_per_trade": 20.0,
+    "win_rate": 0.5,
+    "average_win": 105.0,
+    "average_loss": -65.0,
+    "profit_factor": 1.6154,
+    "max_drawdown": -65.0,
+    "per_symbol_net_pnl": {
+      "SPY": 105.0,
+      "IWM": -65.0
+    }
+  },
+  "limitations": [
+    "Sanitized deterministic fixture only; it is not historical or live performance evidence.",
+    "No network, Alpaca account, MCP tool, or order-submission path is used.",
+    "Production scoring remains fixed at 70; scorer comparisons are offline research only."
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "mode": "offline_reproducible_demo",
+  "live_execution": "disabled_by_design",
+  "fixture": "tests/fixtures/strategy_replay_sanitized.json",
+  "observation_count": 3,
+  "replay_summary": {
+    "trade_count": 2,
+    "gross_pnl": 50.0,
+    "costs": 10.0,
+    "net_pnl": 40.0,
+    "expectancy_usd_per_trade": 20.0,
+    "win_rate": 0.5,
+    "average_win": 105.0,
+    "average_loss": -65.0,
+    "profit_factor": 1.6154,
+    "max_drawdown": -65.0,
+    "per_symbol_net_pnl": {
+      "SPY": 105.0,
+      "IWM": -65.0
+    }
+  },
+  "simulated_lifecycle": {
+    "plan_count": 2,
+    "exit_count": 2,
+    "paper_trade_counters": {
+      "submitted": 0,
+      "acknowledged": 0,
+      "filled": 0,
+      "realized": 0
+    }
+  },
+  "artifacts": {
+    "replay": "strategy_replay.json",
+    "research": "scorer_comparison.json",
+    "simulated_lifecycle": "simulated_lifecycle.json",
+    "guide": "README.md"
+  },
+  "limitations": [
+    "Sanitized deterministic fixture only; it is not historical or live performance evidence.",
+    "No network, Alpaca account, MCP tool, or order-submission path is used.",
+    "Production scoring remains fixed at 70; scorer comparisons are offline research only."
+  ]
+}
