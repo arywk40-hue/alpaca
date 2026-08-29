@@ -10,6 +10,7 @@ from vegaguard.data.fetch import fetch_history
 from vegaguard.data.normalize import (
     contracts_observed_in_historical_quotes,
     normalize_bars,
+    normalize_option_contracts,
     normalize_option_quotes,
 )
 
@@ -74,6 +75,31 @@ def test_normalizers_reject_bad_bars_and_missing_quote_fields():
         normalize_option_quotes(
             {"quotes": [{"symbol": "SPY260116C00600000", "t": "2026-01-01T00:00:00Z"}]}
         )
+
+
+def test_option_normalizer_skips_provider_symbols_that_alpaca_cannot_query():
+    records = normalize_option_contracts(
+        {
+            "option_contracts": [
+                {
+                    "symbol": "1SPY250117P00370010",
+                    "underlying_symbol": "SPY",
+                    "type": "put",
+                    "strike_price": "370.01",
+                    "expiration_date": "2025-01-17",
+                },
+                {
+                    "symbol": "SPY250117P00370000",
+                    "underlying_symbol": "SPY",
+                    "type": "put",
+                    "strike_price": "370",
+                    "expiration_date": "2025-01-17",
+                },
+            ]
+        },
+        observed_at="2026-08-29T13:00:00+00:00",
+    )
+    assert [record["symbol"] for record in records] == ["SPY250117P00370000"]
 
 
 def test_normalized_bars_preserve_utc_timestamp():
@@ -194,6 +220,7 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
             self.last_request_ids = ["request-1"]
             self.snapshot_calls = 0
             self.contract_statuses: list[str] = []
+            self.quote_calls = 0
 
         async def stock_bars(self, **_params):
             return {
@@ -228,16 +255,8 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
             return {"bars": []}
 
         async def option_quotes(self, **_params):
-            return {
-                "quotes": [
-                    {
-                        "symbol": "SPY260821C00002000",
-                        "t": "2026-08-01T14:00:00Z",
-                        "bp": 1,
-                        "ap": 1.1,
-                    }
-                ]
-            }
+            self.quote_calls += 1
+            raise AssertionError("historical option quote endpoint must not be called")
 
         async def option_snapshots(self, **_params):
             self.snapshot_calls += 1
@@ -259,7 +278,13 @@ async def test_fetch_history_requests_and_caches_option_snapshots(tmp_path):
     snapshots = (tmp_path / "normalized" / "option_snapshots.json").read_text()
     manifest = (tmp_path / "cache_manifest.json").read_text()
     assert provider.snapshot_calls == 1
+    assert provider.quote_calls == 0
     assert provider.contract_statuses == ["active", "inactive"]
     assert counts["option_snapshots"] == 1
+    assert counts["option_quotes"] == 0
+    assert counts["historical_option_quotes_available"] is False
+    assert "404 Not Found" in counts["historical_option_quotes_limitation"]
+    assert counts["invalid_contracts_skipped"] == 0
     assert '"delta": 0.45' in snapshots
     assert '"data_kind": "option-snapshot"' in manifest
+    assert "historical_option_quotes_limitation" in manifest

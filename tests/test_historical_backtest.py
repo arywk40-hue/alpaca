@@ -107,6 +107,7 @@ def test_report_labels_missing_option_data_as_inconclusive(tmp_path):
     content = report.read_text()
     assert content.startswith("# STOCK-SIGNAL-ONLY ANALYSIS")
     assert "**Inconclusive.**" in content
+    assert "returned 404" not in content
 
 
 def test_failed_fetch_manifest_cannot_be_reported_as_historical_options_result(tmp_path):
@@ -126,6 +127,38 @@ def test_failed_fetch_manifest_cannot_be_reported_as_historical_options_result(t
     assert result.data_classification == "INCOMPLETE HISTORICAL DATASET"
     assert result.dataset_integrity == "fetch_failed"
     assert result.dataset_integrity_reason == "AlpacaHTTPError: OPRA agreement is not signed"
+
+
+def test_completed_fetch_with_unavailable_quote_history_cannot_optimize_thresholds(tmp_path):
+    cache = LocalMarketDataCache(tmp_path)
+    cache.record_fetch_status(
+        "completed",
+        symbols=["SPY"],
+        start="2026-08-24",
+        end="2026-08-24",
+        include_options=True,
+        counts={
+            "historical_option_quotes_available": False,
+            "historical_option_quotes_limitation": "historical option quotes returned 404",
+        },
+    )
+    normalized = tmp_path / "normalized"
+    normalized.mkdir()
+    _write_records(
+        normalized,
+        "option_quotes",
+        [{"symbol": "SPY260918C00650000", "timestamp": "2026-08-24T15:00:00+00:00"}],
+    )
+    now = datetime(2026, 8, 24, 15, 0, tzinfo=UTC)
+    result = HistoricalBacktester(normalized, symbols=["SPY"], start=now, end=now).run()
+    assert result.data_classification == "INCOMPLETE HISTORICAL DATASET"
+    assert result.dataset_integrity == "option_quote_history_unavailable"
+    assert result.dataset_integrity_reason == "historical option quotes returned 404"
+    report = tmp_path / "report.md"
+    write_historical_report(
+        result, path=report, symbols=["SPY"], start="2026-08-24", end="2026-08-24"
+    )
+    assert "Historical option bid/ask quotes: unavailable" in report.read_text()
 
 
 def test_backtest_uses_later_executable_quotes_for_conservative_exit(tmp_path):

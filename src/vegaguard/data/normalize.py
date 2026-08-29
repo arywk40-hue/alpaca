@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from .alpaca import HistoricalDataError, normalize_timestamp
+
+_OCC_SYMBOL = re.compile(r"^[A-Z]{1,5}\d{6,7}[CP]\d{8}$")
+
+
+def is_valid_option_symbol(value: str) -> bool:
+    """Return whether a symbol matches Alpaca's queryable OCC format."""
+
+    return bool(_OCC_SYMBOL.fullmatch(value))
 
 
 def _rows(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
@@ -43,9 +52,14 @@ def normalize_option_contracts(
     records: list[dict[str, Any]] = []
     for row in _rows(payload, "option_contracts"):
         try:
+            symbol = str(row["symbol"])
+            if not is_valid_option_symbol(symbol):
+                # Keep malformed provider rows in the raw cache, but never send
+                # them back to an endpoint that rejects the entire symbol batch.
+                continue
             records.append(
                 {
-                    "symbol": str(row["symbol"]),
+                    "symbol": symbol,
                     "underlying": str(row["underlying_symbol"]),
                     "option_type": str(row["type"]),
                     "strike": float(row["strike_price"]),
@@ -65,9 +79,12 @@ def normalize_option_quotes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for row in _rows(payload, "quotes"):
         try:
+            symbol = str(row["symbol"])
+            if not is_valid_option_symbol(symbol):
+                continue
             records.append(
                 {
-                    "symbol": str(row["symbol"]),
+                    "symbol": symbol,
                     "timestamp": normalize_timestamp(str(row["t"])),
                     "bid": float(row["bp"]),
                     "ask": float(row["ap"]),
@@ -118,7 +135,7 @@ def contracts_observed_in_historical_quotes(quotes: list[dict[str, Any]]) -> lis
     observed: dict[str, dict[str, Any]] = {}
     for quote in quotes:
         symbol = str(quote.get("symbol", ""))
-        if len(symbol) < 15 or not quote.get("timestamp"):
+        if not is_valid_option_symbol(symbol) or not quote.get("timestamp"):
             continue
         try:
             tail = symbol[-15:]

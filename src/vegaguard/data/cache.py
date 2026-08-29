@@ -82,7 +82,8 @@ class LocalMarketDataCache:
         end: str,
         include_options: bool,
         error: str | None = None,
-        counts: dict[str, int] | None = None,
+        counts: dict[str, Any] | None = None,
+        limitations: list[str] | None = None,
     ) -> None:
         """Record whether a historical-data fetch reached a terminal state."""
         if status not in {"started", "completed", "failed"}:
@@ -99,6 +100,7 @@ class LocalMarketDataCache:
                 "include_options": include_options,
                 **({"error": error} if error else {}),
                 **({"counts": counts} if counts is not None else {}),
+                **({"limitations": limitations} if limitations else {}),
             }
         )
         self.root.mkdir(parents=True, exist_ok=True)

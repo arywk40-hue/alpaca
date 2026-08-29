@@ -209,6 +209,29 @@ def test_dashboard_reports_scheduler_never_started_and_stale_states(tmp_path):
     assert "EventSource('/events')" in dashboard_html()
 
 
+def test_dashboard_operator_mode_wires_controls_without_embedding_secrets():
+    html = dashboard_html()
+    for fragment in (
+        "Local operator mode",
+        "operator-token",
+        "save-token",
+        "clear-token",
+        "sessionStorage",
+        "Authorization",
+        "Bearer ",
+        "SIMULATION",
+        "HYPOTHETICAL SHADOW RESULTS",
+        "APPROVED PLANS",
+        "ACKNOWLEDGED ORDERS",
+        "FILLS",
+        "REALIZED P&amp;L",
+        "Live event timeline",
+    ):
+        assert fragment in html
+    assert "dashboard-test-token" not in html
+    assert "wrong-dashboard-token" not in html
+
+
 class _Cycle:
     def __init__(self):
         self.calls = 0

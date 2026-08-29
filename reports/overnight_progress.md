@@ -74,7 +74,7 @@ Results:
 
 ## Still unverified / external dependencies
 
-- A genuine, sufficiently large point-in-time historical options cache is not available locally. Alpaca historical option-bars/quotes access returned an OPRA-agreement entitlement failure, so no out-of-sample strategy-performance claim is made.
+- A genuine, sufficiently large point-in-time historical options cache is not available locally. The verified historical option-quotes request (`GET /v1beta1/options/quotes`) returned `404 Not Found`; Alpaca documents latest option quotes but not historical quote history at that path. The fetcher now records this capability limitation and makes no out-of-sample strategy-performance claim.
 - No real paper order lifecycle has been performed or claimed. It requires a fresh market-hours plan and separate explicit operator authorization, and is outside this unattended safety run.
 - Live shadow reprices and dashboard updates require a market-hours process plus fresh Alpaca quotes; fixture simulation does not substitute for them.
 

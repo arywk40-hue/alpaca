@@ -1,7 +1,9 @@
 # Historical options data limitations
 
-VegaGuard's historical pipeline retrieves stock bars, option bars, option quotes,
-option contracts, and current option snapshots from the documented Alpaca endpoints.
+VegaGuard's historical pipeline retrieves stock bars, option bars, option contracts,
+and current option snapshots from the documented Alpaca endpoints. Alpaca does not
+provide historical option bid/ask quote history through the endpoint the fetcher
+originally attempted, so the cache cannot support a point-in-time options P&L study.
 It is intentionally strict about what can support a historical options P&L claim.
 
 ## Dataset integrity
@@ -33,22 +35,33 @@ never substituted. If neither official point-in-time data nor this strict transf
 is available, the replay rejects the opportunity and reports `STOCK-SIGNAL-ONLY
 ANALYSIS` rather than inventing an options result.
 
-## Feed limits
+## Historical quote endpoint limitation
 
-Alpaca offers historical option data from February 2024. The free indicative feed
-is delayed and derived from OPRA; OPRA is subscription-dependent. Historical
-option-bars and option-quotes requests may require an OPRA agreement and do not
-accept a feed override. A 403 entitlement response is a data-access blocker, not
-a strategy result. Cache manifests record the selected feed where the endpoint
-supports one, plus request time, data kind, endpoint, and request IDs when
-available. Downloaded data is excluded from Git.
+Alpaca's official API reference documents historical option bars and trades, and
+the latest option quote endpoint at `/v1beta1/options/quotes/latest`; it does not
+document a historical multi-quote endpoint at `/v1beta1/options/quotes`. VegaGuard
+verified the latter request with a valid local paper-account credential and received
+`404 Not Found`. The old fetcher request was:
+
+```text
+GET https://data.alpaca.markets/v1beta1/options/quotes
+    ?symbols=<comma-separated OCC symbols>&start=<RFC-3339/date>
+    &end=<RFC-3339/date>&limit=10000&sort=asc
+```
+
+The fetcher no longer issues that unsupported request. This is an endpoint capability
+limitation, not evidence that the strategy threshold has no edge. A 403 entitlement
+response would be a separate data-access blocker. Cache manifests record this
+limitation, request time, data kind, endpoint, and request IDs when available.
+Downloaded data is excluded from Git.
 
 ## Current research conclusion
 
-Until credentials are supplied and a reproducible cache contains the required
-point-in-time option quote, Greek, IV, and contract observations, VegaGuard's
-options performance conclusion is **inconclusive**. No synthetic fixture or
-stock-only signal is included in an options P&L number.
+Until a reproducible cache contains point-in-time executable bid/ask quotes (from a
+supported source), Greeks/IV, and contract observations, VegaGuard's options
+performance conclusion is **inconclusive**. The Alpaca cache is explicitly marked
+unable to optimize thresholds; no synthetic fixture, latest snapshot, or stock-only
+signal is included in an options P&L number.
 
 ## Fill-cost assumptions
 

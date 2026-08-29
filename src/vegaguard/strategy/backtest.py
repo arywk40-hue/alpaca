@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ..data.alpaca import HISTORICAL_OPTION_QUOTES_LIMITATION
 from ..data.cache import latest_fetch_status
 from ..models import OptionCandidate
 from .indicators import ema, percent_return, realized_volatility, volume_ratio, vwap
@@ -364,7 +365,7 @@ class HistoricalBacktester:
             )
         classification = (
             "INCOMPLETE HISTORICAL DATASET"
-            if dataset_integrity == "fetch_failed"
+            if dataset_integrity in {"fetch_failed", "option_quote_history_unavailable"}
             else (
                 "REAL HISTORICAL OPTION BACKTEST"
                 if trades and contracts and quotes
@@ -402,6 +403,15 @@ class HistoricalBacktester:
         if status.get("status") == "failed":
             return "fetch_failed", str(status.get("error") or "historical fetch failed")
         if status.get("status") == "completed":
+            counts = status.get("counts")
+            if (
+                isinstance(counts, dict)
+                and counts.get("historical_option_quotes_available") is False
+            ):
+                return "option_quote_history_unavailable", str(
+                    counts.get("historical_option_quotes_limitation")
+                    or HISTORICAL_OPTION_QUOTES_LIMITATION
+                )
             return "fetch_completed", None
         return "fetch_incomplete", "historical fetch did not reach a completed state"
 
@@ -816,11 +826,17 @@ def write_historical_report(
         else "Historical option prices are marked using conservative executable bid/ask quotes."
     )
     no_observations = (
-        "- No normalized market observations were available. No external data was downloaded by this "
-        "run (for example, credentials may be absent), so this is an empty report scaffold, not a "
-        "historical-performance result."
+        "- No qualifying point-in-time signal observations were produced for this window. This is not "
+        "a historical-performance result."
         if result.observations == 0
         else None
+    )
+    historical_quote_note = (
+        "- Historical option bid/ask quotes: unavailable. Alpaca's documented option quote "
+        "endpoint is `/v1beta1/options/quotes/latest` (latest only); the historical "
+        "`/v1beta1/options/quotes` request returned 404."
+        if result.dataset_integrity == "option_quote_history_unavailable"
+        else "- Historical option bid/ask quote availability was not established by this cache."
     )
     lines = [
         f"# {title}",
@@ -833,15 +849,21 @@ def write_historical_report(
         f"- Quote-derived IV risk-free rate: {payload['quote_derived_risk_free_rate']}",
         f"- Fixed exit horizon minutes: {payload['exit_horizon_minutes']}",
         (
-            "- Data source/endpoints: Alpaca `/v2/stocks/bars`, `/v1beta1/options/quotes`, "
+            "- Data source/endpoints: Alpaca `/v2/stocks/bars`, `/v1beta1/options/bars`, "
             "`/v1beta1/options/snapshots`, and `/v2/options/contracts`."
         ),
+        historical_quote_note,
         (
             "- Feed limitations: stock feed selection is recorded in `data/cache_manifest.json`; "
             "historical options are available only from February 2024 and indicative quotes are "
             "modified/delayed when OPRA is unavailable."
         ),
         f"- {limitation}",
+        *(
+            [f"- Dataset integrity reason: {result.dataset_integrity_reason}"]
+            if result.dataset_integrity_reason
+            else []
+        ),
         "",
         "## Results",
         "",

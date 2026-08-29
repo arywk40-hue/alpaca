@@ -98,9 +98,12 @@ Do not promote it without a separate, point-in-time out-of-sample historical opt
 
 ### Historical research (read-only)
 
-The historical adapter uses Alpaca's stock-bars, option-bars, option-quotes, option-snapshots,
-and option-contracts endpoints. It has no order-submission code. Downloaded data is kept out of
-Git, along with a cache manifest that records request metadata and request IDs when supplied.
+The historical adapter uses Alpaca's stock-bars, option-bars, option-snapshots, and option-contracts
+endpoints. Alpaca's documented options quote endpoint is latest-only; the historical
+`/v1beta1/options/quotes` request returned `404 Not Found` during verification, so the fetcher records
+that capability limitation and writes no fabricated quote history. It has no order-submission code.
+Downloaded data is kept out of Git, along with a cache manifest that records request metadata and
+request IDs when supplied.
 
 ```bash
 vegaguard data fetch-history \
@@ -135,17 +138,19 @@ execution effect.
 
 The replay rejects data observed after the decision timestamp, incomplete contract metadata,
 stale/missing quotes or Greeks, and missing IV history. It will label output
-`STOCK-SIGNAL-ONLY ANALYSIS` and **inconclusive** rather than claim option P&L if the normalized
-inputs cannot support a real point-in-time option backtest. Alpaca's historical option data starts
-in February 2024; free indicative data is delayed and modified relative to OPRA.
+`INCOMPLETE HISTORICAL DATASET` when the fetch manifest says historical option quotes are unavailable,
+and otherwise uses `STOCK-SIGNAL-ONLY ANALYSIS` and **inconclusive** rather than claim option P&L if
+the normalized inputs cannot support a real point-in-time option backtest. Alpaca's historical option
+data starts in February 2024; free indicative data is delayed and modified relative to OPRA.
 
 Each historical result reports win rate, profit factor, maximum drawdown, net expectancy per
 completed trade, and the missing-data rate across decision attempts. Walk-forward reports compare
 the same metrics at research thresholds 40, 50, 60, and 70; none changes the live threshold.
 
 See [historical data limitations](docs/HISTORICAL_DATA_LIMITATIONS.md) for the current snapshot/IV
-and contract-metadata boundary. The fetcher derives static OCC metadata only from a historical
-quote that proves the contract existed at the decision time.
+and contract-metadata boundary. The fetcher derives static OCC metadata from historical quotes only
+when a supported quote-history source supplies them; Alpaca's current fetch is explicitly marked
+unable to do so.
 
 ### Offline confidence calibration
 

@@ -3,9 +3,13 @@
 Endpoint paths are intentionally kept here, not in strategy code:
 * ``GET https://data.alpaca.markets/v2/stocks/bars``
 * ``GET https://data.alpaca.markets/v1beta1/options/bars``
-* ``GET https://data.alpaca.markets/v1beta1/options/quotes``
 * ``GET https://data.alpaca.markets/v1beta1/options/snapshots``
 * ``GET https://paper-api.alpaca.markets/v2/options/contracts``
+
+Alpaca's documented latest quote path is
+``https://data.alpaca.markets/v1beta1/options/quotes/latest``. There is no
+historical quote-history method here because ``/v1beta1/options/quotes`` was
+verified to return ``404 Not Found``.
 
 The adapter has no trading methods and cannot submit an order.
 """
@@ -19,6 +23,15 @@ from typing import Any, Protocol, Self
 
 import httpx
 
+HISTORICAL_OPTION_QUOTES_PATH = "/v1beta1/options/quotes"
+LATEST_OPTION_QUOTES_PATH = "/v1beta1/options/quotes/latest"
+HISTORICAL_OPTION_QUOTES_LIMITATION = (
+    "Alpaca does not expose historical option bid/ask quotes at "
+    f"{HISTORICAL_OPTION_QUOTES_PATH}; the verified GET request returned 404 Not Found. "
+    f"The documented quote endpoint is {LATEST_OPTION_QUOTES_PATH} (latest only), "
+    "so this cache cannot support point-in-time option threshold optimization."
+)
+
 
 class HistoricalDataError(RuntimeError):
     pass
@@ -30,8 +43,6 @@ class HistoricalMarketDataProvider(Protocol):
     async def option_bars(self, **params: Any) -> dict[str, Any]: ...
 
     async def option_contracts(self, **params: Any) -> dict[str, Any]: ...
-
-    async def option_quotes(self, **params: Any) -> dict[str, Any]: ...
 
     async def option_snapshots(self, **params: Any) -> dict[str, Any]: ...
 
@@ -67,9 +78,6 @@ class AlpacaHistoricalDataProvider:
 
     async def option_bars(self, **params: Any) -> dict[str, Any]:
         return await self._paginate("/v1beta1/options/bars", params, market_data=True)
-
-    async def option_quotes(self, **params: Any) -> dict[str, Any]:
-        return await self._paginate("/v1beta1/options/quotes", params, market_data=True)
 
     async def option_snapshots(self, **params: Any) -> dict[str, Any]:
         return await self._paginate("/v1beta1/options/snapshots", params, market_data=True)

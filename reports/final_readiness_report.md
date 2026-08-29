@@ -64,6 +64,12 @@ The execution plumbing is ready for a deliberately authorized Alpaca paper attem
 
 Research evidence is also limited. The bundled fixture is sanitized and tiny, so its P&L is demonstration output rather than evidence of expected live performance. Threshold comparisons must not automatically alter the production threshold.
 
+The historical Alpaca fetch was rechecked on 2026-08-29 with a valid local paper-account credential. The attempted
+`GET /v1beta1/options/quotes` request returned `404 Not Found`; Alpaca documents latest option quotes
+at `/v1beta1/options/quotes/latest`, not historical quote history at that path. The fetcher now records
+this capability limitation and marks the resulting cache incomplete, so it cannot optimize thresholds
+or claim historical options P&L.
+
 ## Exact operator sequence for the first paper lifecycle
 
 Keep the dashboard and monitor running, then create a fresh dry-run plan during an open U.S. options session:

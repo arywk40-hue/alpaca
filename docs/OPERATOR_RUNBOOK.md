@@ -35,9 +35,11 @@ curl -H "Authorization: Bearer ${DASHBOARD_BEARER_TOKEN}" \
   http://127.0.0.1:8000/agent/shadow/start
 ```
 
-Do not put the token in dashboard JavaScript or a URL. If a browser needs to operate these controls,
-use an authenticated reverse proxy or another trusted mechanism that injects the header without
-exposing the secret to the page. Read-only routes such as `/`, `/health`, `/preflight`,
+Do not put the token in a URL. The dashboard includes a separate **Local operator mode** panel for a
+trusted local browser: paste the token manually, click **Authorize operator**, and the input is cleared.
+The browser keeps it only in tab `sessionStorage`/memory, sends it only as an `Authorization: Bearer …`
+header on mutation requests, and displays token-stored, authorized, unauthorized, or safety-gate status.
+The value is never embedded in the HTML, responses, journal, or logs. Read-only routes such as `/`, `/health`, `/preflight`,
 `/dashboard/state`, `/events`, `/journal`, and `/agent/status` do not require this bearer token.
 
 `OPENAI_API_KEY` is optional. Without it, a local deterministic bounded thesis is used.

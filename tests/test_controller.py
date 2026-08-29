@@ -1,5 +1,7 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from logging import INFO
 
 import pytest
 from fastapi.testclient import TestClient
@@ -275,6 +277,19 @@ def test_mutating_route_accepts_the_configured_dashboard_token(tmp_path):
     assert response.status_code == 200
     assert response.json()["status"] == "disarmed"
     assert TEST_DASHBOARD_TOKEN not in response.text
+
+
+def test_dashboard_token_never_leaks_to_html_responses_journal_or_logs(tmp_path, caplog):
+    controller = _controller(tmp_path)
+    with caplog.at_level(INFO), TestClient(create_app(controller=controller)) as client:
+        response = client.post("/agent/paper/disarm", headers=AUTH_HEADERS)
+        html = client.get("/").text
+
+    assert response.status_code == 200
+    assert TEST_DASHBOARD_TOKEN not in response.text
+    assert TEST_DASHBOARD_TOKEN not in html
+    assert TEST_DASHBOARD_TOKEN not in caplog.text
+    assert TEST_DASHBOARD_TOKEN not in json.dumps(controller.journal.latest())
 
 
 def test_mutating_route_stays_locked_when_server_token_is_unset(tmp_path):
