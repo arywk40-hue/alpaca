@@ -8,6 +8,16 @@
 - **Category tags:** AI trading agents, risk management, developer tools, paper trading
 - **Submission account ID:** sourced from `ALPACA_ACCOUNT_ID`; leave blank in public Git and supply the dedicated paper-account ID only in the submission form.
 
+## Submission fields (copy/paste)
+
+- **Project name:** VegaGuard — Auditable Autonomous Options Risk Committee
+- **One-line pitch:** A paper-only options agent that turns fresh ETF signals into explainable, defined-risk plans without giving an LLM execution authority.
+- **Demo URL:** Run locally with `vegaguard replay` and the FastAPI dashboard; no public deployment is required for the offline demo.
+- **Repository:** This repository, with credentials supplied only through the local environment.
+- **Cover image:** [`assets/vegaguard-cover-v1.png`](../assets/vegaguard-cover-v1.png)
+- **Disclosure:** Replay and shadow numbers are hypothetical or simulated. No paper fill or realized P&L is claimed until provider-backed entry and exit fills are journaled.
+- **Account ID:** enter the dedicated Alpaca paper-account ID in the private submission form only; never commit it or include API keys in the repository.
+
 ## Long description
 
 VegaGuard separates reasoning from authority. A deterministic scanner evaluates SPY, QQQ and IWM, validates fresh option quotes and constructs only one-buy/one-sell debit spreads. An optional language model explains an already bounded opportunity; it cannot override the scanner, select arbitrary contracts or bypass risk. Allocation and execution remain deterministic.
@@ -54,26 +64,17 @@ With dedicated paper credentials, run `vegaguard preflight` and a read-only cycl
 - [ ] If filled: entry/exit provider fills and realized P&L are journaled.
 - [ ] Any unverified item is described as readiness, not completed evidence.
 
-## Slide outline
+## 10-slide outline and 6–7 minute video
 
-1. Problem: autonomous trading without an auditable authority boundary.
-2. Solution: bounded options committee and exact-plan execution.
-3. Architecture: controller, deterministic strategy/risk, Alpaca MCP, audit store.
-4. Safety: paper-only, debit spreads, two locks plus arm, emergency stop.
-5. Research: point-in-time data, shadow repricing, threshold 40/50/60/70 evidence.
-6. Demo: deterministic replay, live dashboard, fresh dry-run plan.
-7. Honest results: verified tests/replay versus pending external paper lifecycle.
-8. Next proof: one reviewed paper fill and automatic close during market hours.
+Use [`HACKATHON_DECK_10_SLIDES.md`](HACKATHON_DECK_10_SLIDES.md) for the on-screen
+copy and [`HACKATHON_NARRATION.md`](HACKATHON_NARRATION.md) for the complete script.
+The ten beats are: problem; authority boundary; deterministic committee; evidence
+ledger; independent safety gates; dashboard; bounded OpenAI explainer; offline
+replay; honest research limits; and the next paper-lifecycle proof.
 
-## Three-minute video storyboard
-
-1. **0:00–0:20:** State the problem and show the paper-only defaults.
-2. **0:20–0:50:** Run `vegaguard replay`; point to simulation labels and zero paper counters.
-3. **0:50–1:25:** Start the dashboard worker; show heartbeat, scan components and rejection math.
-4. **1:25–1:55:** Open one dry-run plan and explain its exact legs, quotes and maximum loss.
-5. **1:55–2:20:** Show arm/disarm, emergency stop and exact-plan quote revalidation without submitting.
-6. **2:20–2:45:** Show lifecycle and shadow ledgers; distinguish hypothetical from fill-derived P&L.
-7. **2:45–3:00:** State precisely whether a complete Alpaca paper lifecycle has been externally verified.
+The replay can be shown in a shorter three-minute cut, but the supplied narration
+is paced for approximately 6:40 and keeps every simulation and hypothetical result
+clearly separate from paper fills.
 
 ## Honest limitations
 
