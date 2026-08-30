@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 from re import fullmatch
+from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Side(StrEnum):
@@ -65,6 +66,25 @@ class Thesis(BaseModel):
     rationale: str = Field(min_length=20, max_length=800)
     invalidation: str = Field(min_length=10, max_length=300)
     candidate_symbol: str
+
+
+class TradeThesisExplanation(BaseModel):
+    """A bounded, non-authoritative explanation of validated trade facts.
+
+    ``source`` and ``fallback_reason`` are assigned by VegaGuard after the
+    strict five-field model response is parsed. They are never supplied by the
+    model and cannot become execution inputs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    thesis: str = Field(min_length=1, max_length=1200)
+    supporting_signals: list[str] = Field(min_length=1, max_length=8)
+    risks: list[str] = Field(min_length=1, max_length=8)
+    invalidation: str = Field(min_length=1, max_length=800)
+    explanation: str = Field(min_length=1, max_length=2000)
+    source: Literal["openai", "deterministic_fallback"] = "deterministic_fallback"
+    fallback_reason: str | None = Field(default=None, max_length=240)
 
 
 class TradePlan(BaseModel):

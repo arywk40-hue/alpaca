@@ -164,6 +164,33 @@ def test_dashboard_distinguishes_approved_plans_from_actual_paper_trades(tmp_pat
     assert "Approved exploration plans" in dashboard_html()
 
 
+def test_dashboard_displays_latest_trade_thesis_explanation(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    journal.append(
+        JournalEntry(
+            event="trade_thesis_explanation",
+            payload={
+                "advisory_only": True,
+                "source": "deterministic_fallback",
+                "fallback_reason": "OPENAI_API_KEY is not configured",
+                "explanation": {
+                    "thesis": "Validated facts are insufficient for a directional claim.",
+                    "supporting_signals": ["score unavailable"],
+                    "risks": ["missing evidence"],
+                    "invalidation": "Require fresh validated facts.",
+                    "explanation": "Deterministic fallback summary.",
+                },
+                "deterministic_controls": {"score": None, "risk_approved": False},
+            },
+        )
+    )
+    state = dashboard_state(journal)
+    assert state["latest_thesis_explanation"]["source"] == "deterministic_fallback"
+    assert state["latest_thesis_explanation"]["explanation"]["risks"] == ["missing evidence"]
+    assert "Trade Thesis &amp; Risk Explainer" in dashboard_html()
+    assert "ADVISORY ONLY" in dashboard_html()
+
+
 def test_dashboard_reports_the_latest_open_position_mark(tmp_path):
     journal = DecisionJournal(tmp_path / "journal.jsonl")
     trade_plan = _plan()

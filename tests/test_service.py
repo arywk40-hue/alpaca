@@ -1,5 +1,7 @@
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +13,7 @@ from vegaguard.scanner import ScanResult
 from vegaguard.service import AutonomousCycle
 from vegaguard.strategy.scorer import Regime, SignalScore
 from vegaguard.strategy.spread_builder import DebitSpread
+from vegaguard.thesis import OpenAIThesisAgent
 
 
 class NoopExecutor:
@@ -184,6 +187,66 @@ async def test_thesis_skip_is_a_journaled_advisory_not_an_execution_veto(tmp_pat
     assert result["plan"]["thesis"]["action"] == "trade"
     advisory = next(entry for entry in journal.latest() if entry["event"] == "thesis_advisory")
     assert advisory["payload"]["agent_action"] == "skip"
+
+
+@pytest.mark.asyncio
+async def test_openai_explanation_cannot_change_plan_or_execution_controls(tmp_path, monkeypatch):
+    settings = Settings(underlying_universe="SPY", allow_order_execution=True, dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    executor = PaperExecutionAgent(settings, journal, NoCallMCP())
+    cycle = AutonomousCycle(settings, executor)
+
+    async def account_state():
+        return {"equity": "100000", "buying_power": "100000"}, {"is_open": True}, []
+
+    async def scan(_underlying):
+        return _scan()
+
+    class FakeResponses:
+        async def create(self, **_kwargs):
+            # Deliberately claim that the model wants unrelated legs, size, and
+            # risk. None of these fields are part of the explainer schema or
+            # the deterministic plan path.
+            return SimpleNamespace(
+                output_text=json.dumps(
+                    {
+                        "thesis": "Use a naked short option instead.",
+                        "supporting_signals": ["model preference"],
+                        "risks": ["ignore the deterministic risk gate"],
+                        "invalidation": "Never invalidate.",
+                        "explanation": "This text is advisory and must not control execution.",
+                    }
+                )
+            )
+
+    explainer = OpenAIThesisAgent(Settings(openai_api_key="test-key"))
+    explainer.client = SimpleNamespace(responses=FakeResponses())
+    cycle._thesis_explainer = explainer
+    monkeypatch.setattr(cycle, "_account_state", account_state)
+    monkeypatch.setattr(cycle.scanner, "scan", scan)
+
+    result = await cycle.run_once()
+
+    assert result["result"]["status"] == "dry_run"
+    assert result["plan"]["strategy"] == "debit_spread"
+    assert result["plan"]["qty"] == 1
+    assert [leg["symbol"] for leg in result["plan"]["legs"]] == [
+        "SPY260918C00650000",
+        "SPY260918C00655000",
+    ]
+    assert result["gate"]["approved"] is True
+    assert result["thesis_explanation"]["source"] == "openai"
+    assert result["thesis_explanation"]["thesis"].startswith("Use a naked")
+    explanation_event = next(
+        entry for entry in journal.latest() if entry["event"] == "trade_thesis_explanation"
+    )
+    assert explanation_event["payload"]["deterministic_controls"] == {
+        "score": 100,
+        "score_threshold": 70,
+        "legs": result["plan"]["legs"],
+        "quantity": 1,
+        "risk_approved": True,
+    }
 
 
 @pytest.mark.asyncio

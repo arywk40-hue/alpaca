@@ -44,6 +44,17 @@ The value is never embedded in the HTML, responses, journal, or logs. Read-only 
 
 `OPENAI_API_KEY` is optional. Without it, a local deterministic bounded thesis is used.
 
+### Trade Thesis & Risk Explainer
+
+When a candidate reaches the post-scan spread and risk review, VegaGuard may ask the optional
+OpenAI client for a strict JSON explanation containing `thesis`, `supporting_signals`, `risks`,
+`invalidation`, and `explanation`. The request contains only serialized, already-validated scanner,
+spread, committee, and risk facts. The response is advisory: deterministic code still owns the
+score, threshold, legs, quantity, risk decision, and execution. Each explanation is journaled as
+`trade_thesis_explanation` with `source: openai` or `source: deterministic_fallback`; fallback
+reasons are retained without logging credentials. The dashboard's **Trade Thesis & Risk Explainer**
+card is informational and never represents a fill or realized P&L.
+
 Install and verify without placing an order:
 
 ```bash

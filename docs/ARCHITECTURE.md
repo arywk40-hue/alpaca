@@ -24,7 +24,12 @@ Immediately before an approved plan can reach MCP, VegaGuard rechecks the paper 
 
 The backend owns both scheduler and paper `trade_updates` tasks. Heartbeats persist the process/session ID, market state, cycle start/completion, next cycle, last success and last error. Temporary scheduler data errors are recorded and the next bounded cycle still runs. The API lifespan cancels its workers cleanly.
 
-The optional OpenAI thesis is advisory: it cannot choose legs, size, approve a failed gate or alter the fixed production threshold. Durable IV history supplies prior-state and point-in-time research features; missing or future data causes abstention.
+The optional OpenAI Trade Thesis & Risk Explainer receives only serialized, already-validated scanner,
+spread, committee, and risk facts and returns strict JSON (`thesis`, `supporting_signals`, `risks`,
+`invalidation`, and `explanation`). It is advisory only: it cannot choose legs, size, approve a failed
+gate, or alter the fixed production threshold. Missing keys and API failures use a labelled deterministic
+fallback. Durable IV history supplies prior-state and point-in-time research features; missing or future
+data causes abstention.
 
 Evidence is separated by construction:
 

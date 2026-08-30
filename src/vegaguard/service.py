@@ -15,12 +15,27 @@ from .committee import (
 )
 from .config import Settings
 from .execution import PaperExecutionAgent
-from .models import GateResult, JournalEntry, OptionLeg, PositionIntent, Side, Thesis, TradePlan
+from .models import (
+    GateResult,
+    JournalEntry,
+    OptionLeg,
+    PositionIntent,
+    Side,
+    Thesis,
+    TradePlan,
+    TradeThesisExplanation,
+)
 from .monitoring import OrderLifecycle, PositionGuardian
 from .risk import DeterministicRiskGate
 from .scanner import OpportunityScanner, ScanResult
 from .strategy.spread_builder import position_size
-from .thesis import DeterministicThesisAgent, OpenAIThesisAgent, ThesisAgent
+from .thesis import (
+    DeterministicThesisAgent,
+    DeterministicThesisExplainer,
+    OpenAIThesisAgent,
+    ThesisAgent,
+    ThesisExplainer,
+)
 
 
 class AutonomousCycle:
@@ -41,6 +56,7 @@ class AutonomousCycle:
         self.risk_gate = DeterministicRiskGate(settings)
         self.executor = executor
         self._thesis_agent: ThesisAgent | None = None
+        self._thesis_explainer: ThesisExplainer | None = None
         self.structure_agent = StructureVolatilityAgent()
         self.adversarial_risk_agent = AdversarialRiskAgent()
         self.allocator = RiskBudgetAllocator()
@@ -277,7 +293,9 @@ class AutonomousCycle:
                 "scan": self._serialize_scan(selected),
                 "reviews": [review.__dict__ for review in reviews],
             }
-        thesis = await self._thesis().evaluate(selected.opportunity)
+        # Keep the original advisory event for compatibility and auditability,
+        # but never use its model-controlled fields to construct the plan.
+        thesis = await self._legacy_thesis_advisory(selected.opportunity)
         self.executor.journal.append(
             JournalEntry(
                 event="thesis_advisory",
@@ -291,7 +309,7 @@ class AutonomousCycle:
                 },
             )
         )
-        plan = self._plan_from_spread(selected, self._execution_thesis(thesis), equity)
+        plan = self._plan_from_spread(selected, self._deterministic_plan_thesis(selected), equity)
         if plan is None:
             diagnostic = self._risk_budget_diagnostic(
                 required_max_loss_usd=selected.spread.max_loss_per_contract,
@@ -316,6 +334,29 @@ class AutonomousCycle:
             open_positions=len(positions),
             buying_power=buying_power,
         )
+        thesis_explanation = await self._explain_thesis(
+            self._thesis_facts(selected, plan, gate, reviews)
+        )
+        self.executor.journal.append(
+            JournalEntry(
+                event="trade_thesis_explanation",
+                payload={
+                    "advisory_only": True,
+                    "source": thesis_explanation.source,
+                    "fallback_reason": thesis_explanation.fallback_reason,
+                    "explanation": thesis_explanation.model_dump(
+                        exclude={"source", "fallback_reason"}
+                    ),
+                    "deterministic_controls": {
+                        "score": selected.score.score if selected.score else None,
+                        "score_threshold": plan.score_threshold,
+                        "legs": [leg.model_dump(mode="json") for leg in plan.legs],
+                        "quantity": plan.qty,
+                        "risk_approved": gate.approved,
+                    },
+                },
+            )
+        )
         if gate.approved:
             self.executor.journal.register_shadow(
                 plan,
@@ -329,6 +370,7 @@ class AutonomousCycle:
             "reviews": [review.__dict__ for review in reviews],
             "plan": plan.model_dump(mode="json"),
             "gate": gate.model_dump(),
+            "thesis_explanation": thesis_explanation.model_dump(mode="json"),
             "result": result,
             "shadow_reprices": shadow_reprices,
         }
@@ -347,6 +389,84 @@ class AutonomousCycle:
             f"{advisory.rationale}"
         )[:800]
         return advisory.model_copy(update={"action": "trade", "rationale": rationale})
+
+    @staticmethod
+    def _deterministic_plan_thesis(scan: ScanResult) -> Thesis:
+        """Build the plan's execution thesis without consulting the explainer."""
+        assert scan.opportunity is not None
+        score = scan.score.score if scan.score else 0
+        return Thesis(
+            action="trade",
+            confidence=min(1.0, round(abs(score) / 100, 2)),
+            rationale=(
+                "Deterministic scanner, validated debit spread, and hard safety gates "
+                "control this paper-only plan."
+            ),
+            invalidation=(
+                "Exit on deterministic signal reversal, stale or widened quotes, "
+                "changed spread economics, or any failed hard safety gate."
+            ),
+            candidate_symbol=scan.opportunity.candidate.symbol,
+        )
+
+    async def _legacy_thesis_advisory(self, opportunity) -> Thesis:
+        """Retain the old journal shape without giving it plan authority."""
+        if self._thesis_agent is not None:
+            return await self._thesis_agent.evaluate(opportunity)
+        return await DeterministicThesisAgent().evaluate(opportunity)
+
+    def _thesis_facts(
+        self, scan: ScanResult, plan: TradePlan, gate: GateResult, reviews: list[Any]
+    ) -> dict[str, Any]:
+        """Return only structured scanner, spread, committee, and risk facts."""
+        score = scan.score
+        candidate = scan.opportunity.candidate if scan.opportunity else None
+        return {
+            "underlying": scan.underlying,
+            "score": score.score if score else None,
+            "regime": score.regime.value if score else "no_trade",
+            "execution_regime": scan.execution_regime,
+            "score_components": (
+                {
+                    "daily_regime": score.daily_regime,
+                    "intraday_trend": score.intraday_trend,
+                    "volume_confirmation": score.volume_confirmation,
+                    "volatility_state": score.volatility_state,
+                    "market_alignment": score.market_alignment,
+                    "agreeing_components": score.agreeing_components,
+                }
+                if score
+                else None
+            ),
+            "candidate": candidate.model_dump(mode="json") if candidate else None,
+            "spread": self._spread_payload(scan.spread) if scan.spread else None,
+            "risk": {
+                "approved": gate.approved,
+                "reasons": list(gate.reasons),
+                "strategy": plan.strategy,
+                "quantity": plan.qty,
+                "max_loss_usd": plan.max_loss_usd,
+                "buying_power_required_usd": plan.max_loss_usd,
+            },
+            "committee_reviews": [
+                {"approved": review.approved, "reasons": list(review.reasons)} for review in reviews
+            ],
+        }
+
+    async def _explain_thesis(self, facts: dict[str, Any]) -> TradeThesisExplanation:
+        if self._thesis_explainer is None:
+            self._thesis_explainer = (
+                OpenAIThesisAgent(self.settings)
+                if self.settings.openai_api_key
+                else DeterministicThesisExplainer()
+            )
+        try:
+            return await self._thesis_explainer.explain(facts)
+        except Exception as exc:  # noqa: BLE001  # A custom provider must fail closed as well.
+            fallback = await DeterministicThesisExplainer().explain(facts)
+            return fallback.model_copy(
+                update={"fallback_reason": f"Explainer failed: {type(exc).__name__}"}
+            )
 
     def _risk_budget_diagnostic(
         self,

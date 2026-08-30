@@ -23,6 +23,33 @@ class DecisionJournal:
         lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]
         return [json.loads(line) for line in reversed(lines)]
 
+    def thesis_explanations(self, limit: int = 20) -> list[dict]:
+        """Return advisory explanations without exposing unrelated journal events."""
+        if not self.path.exists():
+            return []
+        explanations: list[dict] = []
+        for line in reversed(self.path.read_text(encoding="utf-8").splitlines()):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("event") != "trade_thesis_explanation":
+                continue
+            payload = entry.get("payload") or {}
+            explanations.append(
+                {
+                    "timestamp": entry.get("timestamp"),
+                    "advisory_only": bool(payload.get("advisory_only", True)),
+                    "source": payload.get("source", "deterministic_fallback"),
+                    "fallback_reason": payload.get("fallback_reason"),
+                    "explanation": payload.get("explanation") or {},
+                    "deterministic_controls": payload.get("deterministic_controls") or {},
+                }
+            )
+            if len(explanations) >= limit:
+                break
+        return explanations
+
     def scheduler_status(self, *, now: datetime | None = None) -> dict:
         """Return the latest durable scheduler heartbeat without contacting Alpaca."""
         heartbeat = self.ledger.latest_event("scheduler_heartbeat")
