@@ -61,29 +61,30 @@ explanation. A deterministic fallback is labelled when the key is absent or the
 API fails. The explanation cannot alter score, threshold, legs, quantity, risk, or
 execution.
 
-## Slide 8 — Offline replay proves accounting, not performance
+## Slide 8 — The first paper entry crossed every boundary
 
-**On screen:** `SIMULATION_REPLAY` · 3 observations · 2 simulated trades · net hypothetical $40
+**On screen:** IWM bear put spread · 1 contract · $2.62 fill · $262 debit at risk
 
-The sanitized fixture produces gross P&L $50, costs $10, net hypothetical P&L $40,
-win rate 50%, profit factor 1.6154, and maximum drawdown -$65. Paper counters remain
-zero: no submitted, acknowledged, filled, or realized paper trades.
+On August 31, Alpaca acknowledged and filled the exact reviewed exploration plan:
+long the 292.5 put and short the 284 put, expiring September 25. The approved debit
+was $2.65 and the provider-backed fill was $2.62, three dollars better for one
+contract. This is one two-leg spread—not two trades. Provider fees were not reported.
 
-## Slide 9 — Research is honest about uncertainty
+## Slide 9 — Live evidence argues against forcing more trades
 
-**On screen:** Production threshold 70 remains fixed.
+**On screen:** 16 opportunities · 86 reprices · threshold 40: 5 outcomes, −$225.90
 
-Threshold comparisons and shadow repricing are research evidence, not a promise of
-edge. Historical options coverage is limited by the available Alpaca entitlement
-and cache. Small sanitized fixtures are accounting demonstrations, not a claim of
-live profitability. Missing data is recorded as missing, never invented.
+At the August 31 close, the open IWM spread had a conservative executable credit of
+$2.35: −$27 unrealized, or −10.3%, with no exit trigger. Five independent threshold-40
+outcomes had 0% wins and −$45.18 expectancy. The sample is still too small to optimize,
+but it is strong evidence not to lower the fixed production threshold of 70.
 
-## Slide 10 — The next proof is a complete paper lifecycle
+## Slide 10 — One provider-backed exit completes the proof
 
-**On screen:** Fresh scan → approved → submitted → acknowledged → filled → monitored → exited → realized P&L
+**On screen:** Approved → submitted → acknowledged → filled → monitored → **exit pending**
 
-The remaining external milestone is one fresh, reviewed, short-lived plan during
-market hours, followed through the Alpaca paper account. Until provider-backed
-entry and exit fills are journaled, VegaGuard reports readiness—not a completed
-paper trade.
-
+The entry half is proven. VegaGuard resumes one-minute guardian checks when Alpaca
+opens September 1 at 9:30 AM ET / 7:00 PM IST. It will close only on the existing
++50% target, −35% stop, time/expiry rule, or another documented deterministic exit.
+Until Alpaca reports the exit fill, P&L remains unrealized and the lifecycle remains
+open. No second spread can enter while this one is open.

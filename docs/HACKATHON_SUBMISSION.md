@@ -15,7 +15,7 @@
 - **Demo URL:** Run locally with `vegaguard replay` and the FastAPI dashboard; no public deployment is required for the offline demo.
 - **Repository:** This repository, with credentials supplied only through the local environment.
 - **Cover image:** [`assets/vegaguard-cover-v1.png`](../assets/vegaguard-cover-v1.png)
-- **Disclosure:** Replay and shadow numbers are hypothetical or simulated. No paper fill or realized P&L is claimed until provider-backed entry and exit fills are journaled.
+- **Disclosure:** Replay and shadow numbers are hypothetical or simulated. One Alpaca paper entry fill is provider-backed; its P&L remains unrealized until a provider-backed exit fill is journaled.
 - **Account ID:** enter the dedicated Alpaca paper-account ID in the private submission form only; never commit it or include API keys in the repository.
 
 ## Long description
@@ -60,8 +60,9 @@ With dedicated paper credentials, run `vegaguard preflight` and a read-only cycl
 - [ ] Scanner shows numeric score components or explicit abstention reasons.
 - [ ] Plan shows exact legs, quotes, DTE, IV, debit, loss/profit, breakeven and risk math.
 - [ ] Arm/disarm and emergency stop are visible; defaults remain locked.
-- [ ] If externally accepted: provider order ID and acknowledgement are journaled.
-- [ ] If filled: entry/exit provider fills and realized P&L are journaled.
+- [x] Provider order ID and acknowledgement are journaled for the IWM paper entry.
+- [x] The IWM entry fill at a $2.62 debit is journaled and monitored.
+- [ ] Exit provider fill and realized P&L are journaled.
 - [ ] Any unverified item is described as readiness, not completed evidence.
 
 ## 10-slide outline and 6–7 minute video
@@ -78,4 +79,4 @@ clearly separate from paper fills.
 
 ## Honest limitations
 
-No real-money path exists. Historical options evidence remains limited by the supplied Alpaca entitlement/cache. Small fixtures are deterministic accounting demonstrations, not performance claims. Until `vegaguard live lifecycle-evidence` contains provider-backed entry and exit fills, a complete paper lifecycle is ready but not proven.
+No real-money path exists. Historical options evidence remains limited by the supplied Alpaca entitlement/cache. Small fixtures are deterministic accounting demonstrations, not performance claims. The first Alpaca paper entry is provider-backed, but the complete lifecycle remains open until `vegaguard live lifecycle-evidence` contains its provider-backed exit fill and realized P&L.

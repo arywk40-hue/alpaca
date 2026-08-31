@@ -1,12 +1,13 @@
 # VegaGuard Final Readiness Report
 
-Generated: 2026-08-31
+Updated: 2026-09-01
 
 ## Outcome
 
 VegaGuard is implemented as a judge-ready, paper-only options system with safe defaults, a backend-managed control plane, exact-plan approval, defined-risk debit-spread validation, durable lifecycle evidence, shadow evaluation and an offline deterministic demo. Production scoring remains unchanged at 70. Exploration remains disabled by default and uses a configurable threshold of 40.
 
-No MCP order call or paper order was submitted during implementation or verification.
+Implementation and automated verification submitted no orders. Afterward, the operator
+explicitly approved one short-lived IWM exploration plan for Alpaca paper execution.
 
 ## Implemented capabilities
 
@@ -50,19 +51,34 @@ Results:
 
 - Ruff formatting: 87 files already formatted.
 - Ruff lint: all checks passed.
-- Tests: 167 passed. One dependency deprecation warning from FastAPI's Starlette test client; no test failures.
+- Tests: 174 passed. One dependency deprecation warning from FastAPI's Starlette test client; no test failures.
 - Offline replay: three sanitized observations, two simulated plans and exits; all paper submitted/acknowledged/filled/realized counters remained zero.
 - Redacted live readiness check on 2026-08-31: paper account active, provider account ID present, market open, 1,000 SPY option snapshots, 53 available MCP tools and no missing required tools. No account identifier or API credential was printed or persisted.
+- Restart verification on 2026-09-01: preflight remained `ready` with the market
+  closed, the configured paper-account match confirmed, 1,000 SPY option snapshots
+  and all 53 MCP tools available. The Alpaca MCP/FastMCP compatibility pair is now
+  pinned so a fresh `uvx` resolution cannot silently pull the incompatible FastMCP 4.
 - Two live read-only observations established current IV state. The latest production results were SPY `0`, QQQ `-40` and IWM `-65`; all remained neutral below the fixed production threshold or failed agreement checks.
 - Bounded exploration dry-runs: a one-contract SPY 764/750 bear-put spread passed deterministic risk at a $3.93 debit and $393 maximum loss; a later IWM 292.5/284 bear-put spread passed at a $2.67 debit and $267 maximum loss. Both five-minute plans expired without reuse, and `DRY_RUN=true` prevented every MCP order call.
-- Live shadow report: six observations grouped into five opportunities. Three first-horizon marks remain honestly unavailable because the worker originally compared response timestamps with a clock captured before the network request. That timing race is fixed and covered by a deterministic regression test; the failed marks were not rewritten as P&L. Three newer opportunities remain `pending_15m`, and no hypothetical outcome is claimed yet. Positive “quote-backed candidate” evidence is no longer miscounted as a quote failure.
-- Lifecycle evidence: zero completed paper trades.
+- August 31 live shadow report: 48 observations grouped into 16 opportunities with
+  86 quote-backed reprices. Five threshold-40 outcomes produced -$225.90 hypothetical
+  net P&L under conservative ask-to-enter/bid-to-exit accounting. This small negative
+  sample does not justify a threshold change; the fixed production threshold remains 70.
+- Paper lifecycle evidence: one exact IWM bear-put spread was acknowledged and filled
+  at a $2.62 debit on 2026-08-31. Its exit remains pending, so completed-trade count
+  and realized P&L remain zero.
 
 The full preflight schema is stored locally in `data/mcp_preflight.json`. Deterministic demo artifacts are in `results/offline_demo/`.
 
 ## Paper-trade readiness and remaining limitation
 
-The execution plumbing is ready for a deliberately authorized Alpaca paper attempt during an open options session. The provider returned a paper account ID, but `ALPACA_ACCOUNT_ID` is not pinned in the local configuration, so an explicit configured-ID match was not performed. A genuine external lifecycle has not yet been proven: there are currently zero acknowledged, filled and closed paper trades. The project must not claim realized paper P&L until provider fills for both entry and exit exist.
+The execution plumbing has completed the entry half of a deliberately authorized
+Alpaca paper lifecycle. Alpaca acknowledged and filled one IWM 292.5/284 bear-put
+debit spread, expiring 2026-09-25, at $2.62 for one contract. At the 2026-08-31
+close, the last conservative executable mark was $2.35, or -$27 unrealized. The
+guardian correctly held because neither the +50% target nor -35% stop had triggered.
+The full external lifecycle is not complete until the provider acknowledges and fills
+the closing spread; realized P&L must remain zero until then.
 
 Research evidence is also limited. The bundled fixture is sanitized and tiny, so its P&L is demonstration output rather than evidence of expected live performance. Threshold comparisons must not automatically alter the production threshold.
 
@@ -72,34 +88,19 @@ at `/v1beta1/options/quotes/latest`, not historical quote history at that path. 
 this capability limitation and marks the resulting cache incomplete, so it cannot optimize thresholds
 or claim historical options P&L.
 
-## Exact operator sequence for the first paper lifecycle
+## Exact operator sequence for completing the open paper lifecycle
 
-Keep the dashboard and monitor running, then create a fresh dry-run plan during an open U.S. options session:
+Keep the dashboard, scheduler and trade-update monitor running. VegaGuard resumes
+one-minute guardian checks when the U.S. options session opens. Do not create or
+submit a second entry while the IWM spread is open; the one-position gate also
+enforces this.
 
 ```bash
-vegaguard preflight
-EXPLORATION_MODE=true ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
-  vegaguard live run-scheduler --max-cycles 1
 vegaguard live monitor-trade-updates
+vegaguard live run-scheduler --interval-seconds 900
 ```
 
-Review the exact unexpired `plan_id`, leg quotes, maximum loss and risk-budget evidence. Only with explicit operator authorization, submit that exact paper plan once:
-
-```bash
-EXPLORATION_MODE=true ALLOW_ORDER_EXECUTION=true DRY_RUN=false \
-  vegaguard live submit-approved \
-  --plan-id YOUR_REVIEWED_PLAN_ID \
-  --arm-paper-execution
-```
-
-The equivalent dashboard flow requires typing `ARM PAPER EXECUTION`, entering the exact plan ID and using the submit control before the short approval expires. Stop or emergency-stop cannot bypass or cancel at the broker; broker-side intervention remains an explicit operator action.
-
-Immediately restore safe defaults after the attempt:
-
-```env
-EXPLORATION_MODE=false
-ALLOW_ORDER_EXECUTION=false
-DRY_RUN=true
-```
-
-The next acceptance milestone is provider-backed evidence for `approved -> submitted -> acknowledged -> filled -> monitored -> exit submitted -> closed -> actual fill-derived P&L`.
+The next acceptance milestone is provider-backed evidence for
+`approved -> submitted -> acknowledged -> filled -> monitored -> exit submitted -> closed -> actual fill-derived P&L`.
+Any manual intervention must use the broker paper account and be journaled; it must
+not bypass VegaGuard's deterministic exit or safety gates.

@@ -1,8 +1,8 @@
 # VegaGuard — 6–7 minute narration
 
 Read this alongside `HACKATHON_DECK_10_SLIDES.md`. The timings are guidance; the
-script is intentionally explicit about what is simulated and what is not yet a
-provider-backed paper fill.
+script is intentionally explicit about what is simulated, what is a provider-backed
+paper event, and what remains unrealized.
 
 ## 0:00–0:40 — Slide 1: Evidence before execution
 
@@ -72,32 +72,34 @@ quantity, the risk decision, or execution. If there is no key or the API fails, 
 deterministic fallback is clearly labelled. This preserves a useful explanation
 without handing authority to an untrusted response.
 
-## 4:40–5:20 — Slide 8: Offline replay proves accounting, not performance
+## 4:40–5:20 — Slide 8: The first paper entry
 
-For a credential-free demo, I run the sanitized replay fixture. It has three
-observations and two simulated trades. The accounting path reports gross P&L of
-50 dollars, 10 dollars of costs, and 40 dollars of net hypothetical P&L, with a
-50-percent win rate, profit factor 1.6154, and maximum drawdown of negative 65
- dollars. Those numbers are fixture output, not live results. The lifecycle is
-explicitly labelled SIMULATION_REPLAY, and the paper counters remain zero: there
-are no submitted, acknowledged, filled, or realized paper trades in this demo.
+On August 31 the system produced an IWM exploration candidate with a score of
+negative 65.
+After reviewing the exact short-lived plan, I explicitly authorized one paper
+spread: long the September 25 292.5 put and short the 284 put. Alpaca acknowledged
+the multi-leg order and filled one contract at a 2-dollar-and-62-cent debit, three
+dollars better than the approved 2-dollar-and-65-cent limit. That is 262 dollars
+of actual paper debit at risk. It is one defined-risk two-leg spread, not two
+independent trades. Alpaca did not report fees, so the deck does not invent them.
 
-## 5:20–6:00 — Slide 9: Research is honest about uncertainty
+## 5:20–6:00 — Slide 9: Live evidence argues against forcing trades
 
-The production threshold stays at 70. Exploration and threshold comparisons are
-separate research lanes; one trade cannot promote a threshold. Historical options
-coverage is limited by the available Alpaca entitlement and cache, and a small
-sanitized fixture cannot establish an edge. VegaGuard records missing quotes,
-staleness, and liquidity failures instead of filling gaps with invented data. That
-honesty matters: a conservative no-trade decision is evidence about the system, too.
+The production threshold stays at 70. At the August 31 close, the live shadow ledger
+contained 16 independent opportunities and 86 reprices. The five threshold-40
+outcomes lost a hypothetical 225 dollars and 90 cents after conservative ask-to-enter
+and bid-to-exit pricing, with zero wins. The filled IWM spread itself had a conservative
+2-dollar-and-35-cent exit credit at 3:59 PM Eastern: negative 27 dollars, or negative
+10.3 percent, still above the documented stop. This is not enough data to optimize,
+but it is enough to reject the idea of forcing more low-threshold trades.
 
-## 6:00–6:40 — Slide 10: The next proof
+## 6:00–6:40 — Slide 10: Complete the provider-backed exit
 
-The remaining proof is one complete, fresh paper lifecycle: scan, approve a short-
-lived exact plan, submit it, receive acknowledgement, fill it, monitor the position,
-submit the exit, close it, and journal realized provider-backed P&L. That has to happen
-during market hours with the paper account and the operator explicitly approving the
-same plan ID. Until the journal contains both entry and exit fills, VegaGuard will say
-ready but not proven. That is the point of the project: bounded autonomy with evidence
-before execution.
-
+The entry lifecycle is now proven: approved, submitted, acknowledged, filled, and
+monitored. The remaining proof is the provider-backed exit and realized paper P&L.
+At the next open, VegaGuard resumes one-minute guardian checks. The current exit
+credits are 3 dollars and 93 cents for the 50-percent target and about 1 dollar and
+70 cents for the 35-percent stop, plus the documented time and expiry rules.
+No second spread can enter while this position remains open. Until Alpaca reports
+the closing fill, the system correctly labels the 27-dollar close mark unrealized.
+That is bounded autonomy: the evidence changes, while the authority boundary does not.
