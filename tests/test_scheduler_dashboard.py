@@ -343,6 +343,50 @@ async def test_scheduler_manages_positions_each_minute_between_entry_scans(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_entry_scan_timeout_does_not_pause_successful_position_management(tmp_path):
+    sleeps: list[float] = []
+
+    class TimeoutEntryCycle:
+        management_calls = 0
+
+        async def run_once(self):
+            raise TimeoutError("research scan timeout")
+
+        async def manage_open_spreads(self):
+            self.management_calls += 1
+            return {"status": "ok", "managed": [{"status": "hold"}]}
+
+    async def sleep(seconds: float):
+        sleeps.append(seconds)
+
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    cycle = TimeoutEntryCycle()
+    outcomes = await MarketHoursScheduler(
+        cycle,
+        journal,
+        interval_seconds=180,
+        management_interval_seconds=60,
+        sleep=sleep,
+    ).run(max_cycles=2)
+
+    assert outcomes[0]["entry_cycle"] == {
+        "status": "cycle_error",
+        "error_type": "TimeoutError",
+        "reason": "research scan timeout",
+    }
+    assert outcomes[0]["lifecycle"]["status"] == "ok"
+    assert cycle.management_calls == 4
+    assert sleeps == [60, 60, 60]
+    assert (
+        len([entry for entry in journal.latest() if entry["event"] == "position_management_cycle"])
+        == 2
+    )
+    status = journal.scheduler_status()
+    assert status["last_cycle_status"] == "cycle_error"
+    assert status["last_error"] == "research scan timeout"
+
+
+@pytest.mark.asyncio
 async def test_scheduler_preserves_an_empty_timeout_type_in_the_audit(tmp_path):
     class TimeoutCycle:
         async def run_once(self):

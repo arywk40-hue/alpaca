@@ -75,21 +75,24 @@ class MarketHoursScheduler:
                     },
                 )
             )
+            lifecycle = None
             try:
-                lifecycle = None
                 manager = getattr(self.cycle, "manage_open_spreads", None)
                 if callable(manager):
                     lifecycle = await manager()
-                outcome = await self.cycle.run_once()
-                if lifecycle is not None:
-                    outcome = {"entry_cycle": outcome, "lifecycle": lifecycle}
+                entry_outcome = await self.cycle.run_once()
             except (HTTPError, OSError, RuntimeError, TimeoutError) as exc:
                 # Keep paper monitoring alive after a transient data/runtime failure.
-                outcome = {
+                entry_outcome = {
                     "status": "cycle_error",
                     "error_type": type(exc).__name__,
                     "reason": str(exc) or type(exc).__name__,
                 }
+            outcome = (
+                {"entry_cycle": entry_outcome, "lifecycle": lifecycle}
+                if lifecycle is not None
+                else entry_outcome
+            )
             self.recent_outcomes.append(outcome)
             if max_cycles is not None:
                 outcomes.append(outcome)
@@ -97,8 +100,10 @@ class MarketHoursScheduler:
             should_continue = max_cycles is None or cycle_number < max_cycles
             heartbeat_at = self.now().astimezone(UTC)
             next_run_at = heartbeat_at + timedelta(seconds=self.interval_seconds)
-            cycle_failed = outcome.get("status") == "cycle_error"
+            entry_status = self._entry_outcome(outcome)
+            cycle_failed = entry_status.get("status") == "cycle_error"
             market_open = self._market_open(outcome)
+            lifecycle_open = isinstance(lifecycle, dict) and lifecycle.get("status") == "ok"
             self.journal.append(
                 JournalEntry(
                     timestamp=heartbeat_at,
@@ -112,8 +117,8 @@ class MarketHoursScheduler:
                         "cycle_number": cycle_number,
                         "interval_seconds": self.interval_seconds,
                         "management_interval_seconds": self.management_interval_seconds,
-                        "last_cycle_status": outcome.get("status", "completed"),
-                        "last_error": outcome.get("reason") if cycle_failed else None,
+                        "last_cycle_status": entry_status.get("status", "completed"),
+                        "last_error": entry_status.get("reason") if cycle_failed else None,
                         "next_run_at": next_run_at.isoformat() if should_continue else None,
                         "session_id": self.session_id,
                         "process_id": self.process_id,
@@ -127,14 +132,16 @@ class MarketHoursScheduler:
                 )
             )
             if should_continue:
-                await self._wait_for_next_cycle(market_open=market_open)
+                await self._wait_for_next_cycle(
+                    manage_positions=market_open is True or lifecycle_open
+                )
         return outcomes
 
-    async def _wait_for_next_cycle(self, *, market_open: bool | None) -> None:
+    async def _wait_for_next_cycle(self, *, manage_positions: bool) -> None:
         """Evaluate open-position exits between the slower entry scans."""
         manager = getattr(self.cycle, "manage_open_spreads", None)
         if (
-            market_open is not True
+            not manage_positions
             or not callable(manager)
             or self.management_interval_seconds >= self.interval_seconds
         ):
@@ -162,10 +169,13 @@ class MarketHoursScheduler:
                 return
 
     @staticmethod
+    def _entry_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
+        entry = outcome.get("entry_cycle")
+        return entry if isinstance(entry, dict) else outcome
+
+    @staticmethod
     def _market_open(outcome: dict[str, Any]) -> bool | None:
-        entry = (
-            outcome.get("entry_cycle") if isinstance(outcome.get("entry_cycle"), dict) else outcome
-        )
+        entry = MarketHoursScheduler._entry_outcome(outcome)
         if entry.get("reason") == "market_closed" or entry.get("status") == "market_closed":
             return False
         if entry.get("status") == "cycle_error":
