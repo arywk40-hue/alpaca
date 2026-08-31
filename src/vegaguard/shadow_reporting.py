@@ -42,10 +42,7 @@ def build_session_report(candidates: list[dict], reprices: list[dict]) -> dict[s
         for candidate in grouped_candidates
     )
     quote_failures = sum(
-        1
-        for reason, count in reasons.items()
-        if any(token in reason.lower() for token in ("stale", "quote", "fresh"))
-        for _ in range(count)
+        count for reason, count in reasons.items() if _is_quote_freshness_failure(reason)
     )
     liquidity_failures = sum(
         1
@@ -56,10 +53,7 @@ def build_session_report(candidates: list[dict], reprices: list[dict]) -> dict[s
     reprice_failures = [
         str((reprice.get("outcome") or {}).get("reason") or "") for reprice in reprices
     ]
-    quote_failures += sum(
-        any(token in reason.lower() for token in ("stale", "quote", "fresh"))
-        for reason in reprice_failures
-    )
+    quote_failures += sum(_is_quote_freshness_failure(reason) for reason in reprice_failures)
     liquidity_failures += sum(
         any(token in reason.lower() for token in ("liquid", "bid-ask", "spread"))
         for reason in reprice_failures
@@ -119,6 +113,26 @@ def build_session_report(candidates: list[dict], reprices: list[dict]) -> dict[s
             for bucket in ("selected", "exploration", "shadow")
         },
     }
+
+
+def _is_quote_freshness_failure(reason: str) -> bool:
+    """Identify an actual quote-age/availability failure, not positive quote evidence."""
+
+    value = reason.lower()
+    if "quote" not in value:
+        return False
+    return any(
+        failure in value
+        for failure in (
+            "stale",
+            "missing",
+            "unavailable",
+            "retrieval failed",
+            "not fresh",
+            "too old",
+            "from the future",
+        )
+    )
 
 
 def _score_distribution(scores: list[int]) -> dict[str, int]:

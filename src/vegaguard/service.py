@@ -534,6 +534,7 @@ class AutonomousCycle:
         for candidate in self.executor.journal.due_shadow_reprices(now):
             spread = candidate["spread"]
             symbols = [spread["long_symbol"], spread["short_symbol"]]
+            repriced_at = now
             if candidate.get("deadline_status") == "overdue":
                 outcome = {
                     "status": "unavailable",
@@ -546,7 +547,11 @@ class AutonomousCycle:
                     snapshots = await self.alpaca.option_snapshots(
                         candidate["underlying"], symbols=symbols
                     )
-                    outcome = self._hypothetical_reprice(spread, snapshots, now)
+                    # Alpaca's quote can be stamped after the request began.
+                    # Validate it against the post-response clock so ordinary
+                    # network latency is not misclassified as future data.
+                    repriced_at = self._now()
+                    outcome = self._hypothetical_reprice(spread, snapshots, repriced_at)
                 except (HTTPError, RuntimeError) as exc:
                     # Shadow evidence must fail closed per candidate. A bad
                     # response is useful evidence, never a priced outcome.
@@ -559,7 +564,7 @@ class AutonomousCycle:
             stored = self.executor.journal.record_shadow_reprice(
                 int(candidate["candidate_id"]),
                 int(candidate["horizon_minutes"]),
-                repriced_at=now,
+                repriced_at=repriced_at,
                 outcome_bucket=bucket,
                 outcome=outcome,
             )

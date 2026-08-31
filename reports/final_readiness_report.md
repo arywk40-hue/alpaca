@@ -1,6 +1,6 @@
 # VegaGuard Final Readiness Report
 
-Generated: 2026-08-28
+Generated: 2026-08-31
 
 ## Outcome
 
@@ -48,19 +48,21 @@ EXPLORATION_MODE=true ALLOW_ORDER_EXECUTION=true DRY_RUN=true \
 
 Results:
 
-- Ruff formatting: 84 files already formatted.
+- Ruff formatting: 87 files already formatted.
 - Ruff lint: all checks passed.
-- Tests: 141 passed. One dependency deprecation warning from FastAPI's Starlette test client; no test failures.
+- Tests: 167 passed. One dependency deprecation warning from FastAPI's Starlette test client; no test failures.
 - Offline replay: three sanitized observations, two simulated plans and exits; all paper submitted/acknowledged/filled/realized counters remained zero.
-- Live read-only preflight at `2026-08-28T11:20:39Z`: ready, paper account active, 1,000 SPY option snapshots, 53 available MCP tools and no missing required tools. The market was closed.
-- Bounded live dry-run: stopped at `market_closed`; no candidate plan or order path was reached.
+- Redacted live readiness check on 2026-08-31: paper account active, provider account ID present, market open, 1,000 SPY option snapshots, 53 available MCP tools and no missing required tools. No account identifier or API credential was printed or persisted.
+- Two live read-only observations established current IV state. The latest production results were SPY `0`, QQQ `-40` and IWM `-65`; all remained neutral below the fixed production threshold or failed agreement checks.
+- Bounded exploration dry-runs: a one-contract SPY 764/750 bear-put spread passed deterministic risk at a $3.93 debit and $393 maximum loss; a later IWM 292.5/284 bear-put spread passed at a $2.67 debit and $267 maximum loss. Both five-minute plans expired without reuse, and `DRY_RUN=true` prevented every MCP order call.
+- Live shadow report: six observations grouped into five opportunities. Three first-horizon marks remain honestly unavailable because the worker originally compared response timestamps with a clock captured before the network request. That timing race is fixed and covered by a deterministic regression test; the failed marks were not rewritten as P&L. Three newer opportunities remain `pending_15m`, and no hypothetical outcome is claimed yet. Positive “quote-backed candidate” evidence is no longer miscounted as a quote failure.
 - Lifecycle evidence: zero completed paper trades.
 
 The full preflight schema is stored locally in `data/mcp_preflight.json`. Deterministic demo artifacts are in `results/offline_demo/`.
 
 ## Paper-trade readiness and remaining limitation
 
-The execution plumbing is ready for a deliberately authorized Alpaca paper attempt during an open options session. A genuine external lifecycle has not yet been proven: there are currently zero acknowledged, filled and closed paper trades. The project must not claim realized paper P&L until provider fills for both entry and exit exist.
+The execution plumbing is ready for a deliberately authorized Alpaca paper attempt during an open options session. The provider returned a paper account ID, but `ALPACA_ACCOUNT_ID` is not pinned in the local configuration, so an explicit configured-ID match was not performed. A genuine external lifecycle has not yet been proven: there are currently zero acknowledged, filled and closed paper trades. The project must not claim realized paper P&L until provider fills for both entry and exit exist.
 
 Research evidence is also limited. The bundled fixture is sanitized and tiny, so its P&L is demonstration output rather than evidence of expected live performance. Threshold comparisons must not automatically alter the production threshold.
 

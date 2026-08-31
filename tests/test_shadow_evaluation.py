@@ -6,6 +6,7 @@ from vegaguard.config import Settings
 from vegaguard.execution import PaperExecutionAgent
 from vegaguard.journal import DecisionJournal
 from vegaguard.service import AutonomousCycle
+from vegaguard.shadow_reporting import build_session_report
 from vegaguard.storage import PaperLedger
 
 
@@ -123,6 +124,81 @@ def test_session_report_keeps_hypothetical_outcomes_separate(tmp_path):
     assert report["hypothetical_pnl_by_threshold"]["40"]["net_hypothetical_pnl"] == 25.0
     assert report["hypothetical_pnl_by_threshold"]["40"]["expectancy_usd_per_opportunity"] == 25.0
     assert report["hypothetical_pnl_by_threshold"]["70"]["outcome_count"] == 0
+
+
+def test_session_report_quote_failures_ignore_positive_quote_evidence():
+    observed_at = datetime.now(UTC).isoformat()
+    candidate = {
+        "id": 1,
+        "opportunity_id": "opp-positive-quote-evidence",
+        "observed_at": observed_at,
+        "score": -40,
+        "classification": "exploration_eligible",
+        "reasons": ["exploration threshold 40 accepted the quote-backed directional candidate"],
+        "reprice_status": {"status": "pending_15m"},
+    }
+
+    report = build_session_report([candidate], [])
+
+    assert report["quote_freshness_failures"] == 0
+
+
+def test_session_report_counts_only_actual_quote_freshness_failures():
+    observed_at = datetime.now(UTC).isoformat()
+    candidate = {
+        "id": 1,
+        "opportunity_id": "opp-stale-quote",
+        "observed_at": observed_at,
+        "score": -40,
+        "classification": "rejected_quote",
+        "reasons": ["long option quote is stale"],
+        "reprice_status": {"status": "quote_unavailable"},
+    }
+    reprice = {
+        "candidate_id": 1,
+        "repriced_at": observed_at,
+        "outcome_bucket": "shadow",
+        "outcome": {
+            "status": "unavailable",
+            "hypothetical": True,
+            "reason": "short exit quote is from the future",
+        },
+    }
+
+    report = build_session_report([candidate], [reprice])
+
+    assert report["quote_freshness_failures"] == 2
+
+
+@pytest.mark.asyncio
+async def test_reprice_validates_quote_time_after_snapshot_request(tmp_path, monkeypatch):
+    start = datetime(2026, 8, 31, 16, 0, tzinfo=UTC)
+    current = [start + timedelta(minutes=15)]
+    settings = Settings()
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    candidate_id = _record_candidate(journal, observed_at=start)
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: current[0],
+    )
+
+    async def option_snapshots(_underlying, *, symbols):
+        current[0] += timedelta(seconds=2)
+        return {
+            symbols[0]: {"latestQuote": {"t": current[0].isoformat(), "bp": 2.6, "ap": 2.7}},
+            symbols[1]: {"latestQuote": {"t": current[0].isoformat(), "bp": 0.4, "ap": 0.5}},
+        }
+
+    monkeypatch.setattr(cycle.alpaca, "option_snapshots", option_snapshots)
+
+    result = await cycle.reprice_shadow_candidates()
+
+    assert result[0]["candidate_id"] == candidate_id
+    assert result[0]["status"] == "priced"
+    stored = journal.shadow_reprices()[0]
+    assert stored["repriced_at"] == current[0].isoformat()
+    assert stored["outcome"]["net_hypothetical_pnl"] == 80.0
 
 
 @pytest.mark.asyncio
