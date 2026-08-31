@@ -213,7 +213,8 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
             }
         ]
 
-    async def snapshots(_underlying):
+    async def snapshots(_underlying, *, symbols):
+        assert symbols == [entry.legs[0].symbol, entry.legs[1].symbol]
         timestamp = datetime.now(UTC).isoformat()
         return {
             entry.legs[0].symbol: {"latestQuote": {"bp": 2.6, "ap": 2.7, "t": timestamp}},

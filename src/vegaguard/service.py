@@ -114,7 +114,8 @@ class AutonomousCycle:
             if plan is None or plan.is_closing or plan.strategy != "debit_spread":
                 continue
             entry_debit = self._recorded_entry_debit(plan, order)
-            snapshots = await self.alpaca.option_snapshots(plan.underlying)
+            held_symbols = [leg.symbol for leg in plan.legs]
+            snapshots = await self.alpaca.option_snapshots(plan.underlying, symbols=held_symbols)
             credit = self._executable_exit_credit(plan, snapshots)
             if credit is None:
                 managed.append({"client_order_id": client_order_id, "status": "no_quote"})
