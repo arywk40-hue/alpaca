@@ -36,6 +36,9 @@ class LifecycleState:
 class PositionGuardian:
     """Evaluates exits only; execution remains separately gated and disabled by default."""
 
+    take_profit_return = 0.50
+    stop_loss_return = -0.35
+
     def evaluate(
         self,
         *,
@@ -50,9 +53,9 @@ class PositionGuardian:
             raise ValueError("entry debit must be positive")
         now = (now or datetime.now(UTC)).astimezone(UTC)
         spread_return = (executable_exit_value - entry_debit) / entry_debit
-        if spread_return >= 0.50:
+        if spread_return >= self.take_profit_return:
             return ExitDecision("exit", "take_profit", spread_return)
-        if spread_return <= -0.35:
+        if spread_return <= self.stop_loss_return:
             return ExitDecision("exit", "stop_loss", spread_return)
         if signal_reversed:
             return ExitDecision("exit", "signal_reversal", spread_return)

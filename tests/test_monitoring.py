@@ -228,3 +228,8 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
     assert managed["managed"][0]["reason"] == "take_profit"
     marks = [event for event in journal.latest() if event["event"] == "position_mark"]
     assert marks[0]["payload"]["unrealized_pnl"] == 80.0
+    assert marks[0]["payload"]["spread_return_pct"] == 0.615385
+    assert marks[0]["payload"]["guardian_action"] == "exit"
+    assert marks[0]["payload"]["guardian_reason"] == "take_profit"
+    assert marks[0]["payload"]["take_profit_exit_credit"] == 1.95
+    assert marks[0]["payload"]["stop_loss_exit_credit"] == 0.845

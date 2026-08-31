@@ -120,19 +120,6 @@ class AutonomousCycle:
                 managed.append({"client_order_id": client_order_id, "status": "no_quote"})
                 continue
             unrealized_pnl = round((credit - entry_debit) * 100 * plan.qty, 2)
-            self.executor.journal.append(
-                JournalEntry(
-                    event="position_mark",
-                    plan=plan,
-                    payload={
-                        "entry_debit": entry_debit,
-                        "executable_exit_credit": credit,
-                        "unrealized_pnl": unrealized_pnl,
-                        "costs_usd": None,
-                        "pnl_after_costs": None,
-                    },
-                )
-            )
             entered_at = self._order_timestamp(order.get("filled_at"))
             expiration = datetime.fromisoformat(plan.candidate.expiration).replace(tzinfo=UTC)
             decision = guardian.evaluate(
@@ -141,6 +128,28 @@ class AutonomousCycle:
                 entered_at=entered_at,
                 expiration=expiration,
                 now=self._now(),
+            )
+            self.executor.journal.append(
+                JournalEntry(
+                    event="position_mark",
+                    plan=plan,
+                    payload={
+                        "entry_debit": entry_debit,
+                        "executable_exit_credit": credit,
+                        "unrealized_pnl": unrealized_pnl,
+                        "spread_return_pct": round(decision.spread_return_pct, 6),
+                        "guardian_action": decision.action,
+                        "guardian_reason": decision.reason,
+                        "take_profit_exit_credit": round(
+                            entry_debit * (1 + guardian.take_profit_return), 4
+                        ),
+                        "stop_loss_exit_credit": round(
+                            entry_debit * (1 + guardian.stop_loss_return), 4
+                        ),
+                        "costs_usd": None,
+                        "pnl_after_costs": None,
+                    },
+                )
             )
             if decision.action == "hold":
                 managed.append(
