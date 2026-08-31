@@ -45,28 +45,7 @@ def dashboard_state(journal: DecisionJournal, *, limit: int = 20) -> dict[str, A
     )
     events = journal.latest(max(limit, 200))
     completed_paper_trades = journal.complete_trade_evidence()
-    acknowledged_order_ids: set[str] = set()
-    for event in events:
-        if (
-            event.get("event") == "order_acknowledged"
-            and event.get("plan")
-            and not event["plan"].get("parent_client_order_id")
-        ):
-            acknowledged_order_ids.add(str(event["plan"]["client_order_id"]))
-        payload = event.get("payload") or {}
-        if (
-            event.get("event") == "order_lifecycle_transition"
-            and payload.get("status") in {"accepted", "partially_filled", "filled", "submitted"}
-            and payload.get("client_order_id")
-        ):
-            acknowledged_order_ids.add(str(payload["client_order_id"]))
-    filled_trade_ids = {
-        str((event.get("plan") or {}).get("client_order_id"))
-        for event in events
-        if event.get("event") == "position_entry_filled"
-        and event.get("plan")
-        and not (event["plan"].get("parent_client_order_id"))
-    }
+    acknowledged_order_ids, filled_trade_ids = journal.paper_lifecycle_ids()
     latest_marks: dict[str, float] = {}
     for event in reversed(events):
         if event.get("event") != "position_mark":

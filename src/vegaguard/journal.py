@@ -23,6 +23,34 @@ class DecisionJournal:
         lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]
         return [json.loads(line) for line in reversed(lines)]
 
+    def paper_lifecycle_ids(self) -> tuple[set[str], set[str]]:
+        """Return durable acknowledgement and entry-fill IDs from the full journal."""
+        acknowledged: set[str] = set()
+        filled_entries: set[str] = set()
+        if not self.path.exists():
+            return acknowledged, filled_entries
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event = entry.get("event")
+            plan = entry.get("plan") or {}
+            payload = entry.get("payload") or {}
+            client_order_id = str(
+                plan.get("client_order_id") or payload.get("client_order_id") or ""
+            )
+            if not client_order_id:
+                continue
+            if event in {"order_acknowledged", "exit_order_acknowledged"} or (
+                event == "order_lifecycle_transition"
+                and payload.get("status") in {"accepted", "partially_filled", "filled", "submitted"}
+            ):
+                acknowledged.add(client_order_id)
+            if event == "position_entry_filled" and not plan.get("parent_client_order_id"):
+                filled_entries.add(client_order_id)
+        return acknowledged, filled_entries
+
     def thesis_explanations(self, limit: int = 20) -> list[dict]:
         """Return advisory explanations without exposing unrelated journal events."""
         if not self.path.exists():

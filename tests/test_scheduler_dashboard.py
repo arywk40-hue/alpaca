@@ -165,6 +165,27 @@ def test_dashboard_distinguishes_approved_plans_from_actual_paper_trades(tmp_pat
     assert "Approved exploration plans" in dashboard_html()
 
 
+def test_dashboard_lifecycle_counts_do_not_expire_from_the_recent_event_window(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    trade_plan = _plan()
+    journal.append(
+        JournalEntry(
+            event="order_acknowledged",
+            plan=trade_plan,
+            payload={"provider_status": "accepted"},
+        )
+    )
+    journal.record_entry_fill(trade_plan, filled_price=1.3, source="test")
+    for index in range(220):
+        journal.append(JournalEntry(event="scan_observation", payload={"index": index}))
+
+    state = dashboard_state(journal)
+
+    assert len(state["journal"]) == 20
+    assert state["summary"]["acknowledged_paper_order_count"] == 1
+    assert state["summary"]["filled_paper_trade_count"] == 1
+
+
 def test_dashboard_displays_latest_trade_thesis_explanation(tmp_path):
     journal = DecisionJournal(tmp_path / "journal.jsonl")
     journal.append(
