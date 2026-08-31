@@ -256,6 +256,46 @@ async def test_reprice_request_failure_is_persisted_as_quote_unavailable(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_reprice_retries_one_transient_request_failure(tmp_path, monkeypatch):
+    now = datetime.now(UTC)
+    settings = Settings()
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    candidate_id = _record_candidate(journal, observed_at=now - timedelta(minutes=15))
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: now,
+    )
+    attempts = 0
+
+    async def transient_quotes(_underlying, *, symbols):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary timeout")
+        return {
+            symbols[0]: {"latestQuote": {"t": now.isoformat(), "bp": 2.6, "ap": 2.7}},
+            symbols[1]: {"latestQuote": {"t": now.isoformat(), "bp": 0.4, "ap": 0.5}},
+        }
+
+    monkeypatch.setattr(cycle.alpaca, "option_snapshots", transient_quotes)
+
+    result = await cycle.reprice_shadow_candidates()
+
+    assert attempts == 2
+    assert result == [
+        {
+            "candidate_id": candidate_id,
+            "horizon_minutes": 15,
+            "stored": True,
+            "outcome_bucket": "shadow",
+            "status": "priced",
+        }
+    ]
+    assert journal.shadow_reprices()[0]["outcome"]["net_hypothetical_pnl"] == 80.0
+
+
+@pytest.mark.asyncio
 async def test_fake_clock_persists_complete_reprices_on_the_original_opportunity(
     tmp_path, monkeypatch
 ):

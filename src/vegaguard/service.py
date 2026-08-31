@@ -543,22 +543,28 @@ class AutonomousCycle:
                     "due_at": candidate.get("due_at"),
                 }
             else:
-                try:
-                    snapshots = await self.alpaca.option_snapshots(
-                        candidate["underlying"], symbols=symbols
-                    )
-                    # Alpaca's quote can be stamped after the request began.
-                    # Validate it against the post-response clock so ordinary
-                    # network latency is not misclassified as future data.
-                    repriced_at = self._now()
-                    outcome = self._hypothetical_reprice(spread, snapshots, repriced_at)
-                except (HTTPError, RuntimeError) as exc:
-                    # Shadow evidence must fail closed per candidate. A bad
-                    # response is useful evidence, never a priced outcome.
+                last_error: HTTPError | RuntimeError | None = None
+                for _attempt in range(2):
+                    try:
+                        snapshots = await self.alpaca.option_snapshots(
+                            candidate["underlying"], symbols=symbols
+                        )
+                        # Alpaca's quote can be stamped after the request began.
+                        # Validate it against the post-response clock so ordinary
+                        # network latency is not misclassified as future data.
+                        repriced_at = self._now()
+                        outcome = self._hypothetical_reprice(spread, snapshots, repriced_at)
+                        break
+                    except (HTTPError, RuntimeError) as exc:
+                        # Retry one transient request failure before preserving
+                        # missing-data evidence. This never relaxes quote checks.
+                        last_error = exc
+                else:
+                    assert last_error is not None
                     outcome = {
                         "status": "unavailable",
                         "hypothetical": True,
-                        "reason": f"exit quote retrieval failed: {type(exc).__name__}",
+                        "reason": f"exit quote retrieval failed: {type(last_error).__name__}",
                     }
             bucket = self._outcome_bucket(candidate)
             stored = self.executor.journal.record_shadow_reprice(
