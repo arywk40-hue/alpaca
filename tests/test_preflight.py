@@ -28,6 +28,8 @@ async def test_preflight_is_read_only_and_saves_no_secrets(tmp_path):
     assert report["status"] == "ready"
     assert report["paper_only"] is True
     assert report["market_data"]["option_snapshot_count"] == 1
+    assert "configured_account_id" not in report["rest"]
+    assert "paper-account" not in json.dumps(report)
     path = PaperPreflight.write_report(report, tmp_path / "preflight.json")
     assert json.loads(path.read_text()) == report
 

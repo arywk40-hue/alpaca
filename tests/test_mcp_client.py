@@ -19,6 +19,16 @@ def test_mcp_client_falls_back_to_path_when_virtualenv_has_no_uvx(monkeypatch, t
     assert AlpacaMCPClient._uvx_command() == "uvx"
 
 
+def test_mcp_client_pins_compatible_server_runtime():
+    assert AlpacaMCPClient._uvx_args() == [
+        "--from",
+        "alpaca-mcp-server==2.3.0",
+        "--with",
+        "fastmcp>=3.1,<4",
+        "alpaca-mcp-server",
+    ]
+
+
 def test_mcp_allowlist_excludes_destructive_account_wide_tools():
     assert "place_option_order" in AlpacaMCPClient.approved_tools
     assert "close_position" not in AlpacaMCPClient.approved_tools

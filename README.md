@@ -8,7 +8,9 @@ VegaGuard is an autonomous **paper-options** agent built for the Alpaca AI Tradi
 
 - **Autonomous agents:** the scanner, thesis agent, risk critic and position monitor run as an event loop.
 - **Alpaca Trading API:** the official Alpaca MCP server is the execution and account/data boundary over Alpaca's Trading API.
-- **MCP:** `uvx alpaca-mcp-server` is launched as a stdio MCP server; available tool schemas are discovered dynamically at runtime.
+- **MCP:** the official Alpaca MCP server is launched through `uvx` with a pinned,
+  tested Alpaca/FastMCP compatibility pair; available tool schemas are discovered
+  dynamically at runtime.
 - **Options:** only option contracts can form a `TradePlan`; the execution adapter calls `place_option_order`.
 - **Paper only:** the MCP environment is hard-wired to `ALPACA_PAPER_TRADE=true`. This project refuses an execution attempt if that is not true.
 - **LLM boundary:** optional OpenAI output is journaled as an explanation/advisory only; deterministic scanner, spread, and risk gates—not the model—control whether a plan exists.

@@ -65,7 +65,6 @@ class PaperPreflight:
             "rest": {
                 "account_status": account.get("status"),
                 "account_id_present": bool(account.get("id")),
-                "configured_account_id": configured_account_id,
                 "account_id_matches_configuration": account_id_matches,
                 "market_open": bool(clock.get("is_open")),
             },

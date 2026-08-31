@@ -14,6 +14,12 @@ from .config import Settings
 class AlpacaMCPClient:
     """Thin client for the official, locally launched Alpaca MCP v2 server."""
 
+    # Keep the external tool server reproducible. Alpaca MCP 2.3.0 imports an API
+    # removed by FastMCP 4, while its published dependency currently has no upper
+    # bound. An unpinned ``uvx alpaca-mcp-server`` can therefore break on restart.
+    server_version = "2.3.0"
+    fastmcp_requirement = "fastmcp>=3.1,<4"
+
     approved_tools = frozenset(
         {
             "get_account_info",
@@ -37,11 +43,21 @@ class AlpacaMCPClient:
         candidate = Path(sys.executable).with_name("uvx")
         return str(candidate) if candidate.is_file() else "uvx"
 
+    @classmethod
+    def _uvx_args(cls) -> list[str]:
+        return [
+            "--from",
+            f"alpaca-mcp-server=={cls.server_version}",
+            "--with",
+            cls.fastmcp_requirement,
+            "alpaca-mcp-server",
+        ]
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator[ClientSession]:
         parameters = StdioServerParameters(
             command=self._uvx_command(),
-            args=["alpaca-mcp-server"],
+            args=self._uvx_args(),
             env=self.settings.mcp_environment(),
         )
         async with stdio_client(parameters) as (read, write), ClientSession(read, write) as client:
