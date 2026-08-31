@@ -2,6 +2,7 @@ import json
 import sys
 
 import pytest
+from pydantic import SecretStr
 
 from vegaguard import cli
 from vegaguard.config import Settings
@@ -44,6 +45,46 @@ async def test_multi_cycle_read_only_command_reuses_one_scanner_and_never_execut
 async def test_multi_cycle_read_only_validates_the_interval_before_creating_clients():
     with pytest.raises(ValueError, match="at least 60"):
         await cli._read_only_cycle(cycles=2, interval_seconds=59)
+
+
+@pytest.mark.asyncio
+async def test_trade_update_monitor_reconnects_without_exposing_credentials(
+    monkeypatch, tmp_path, capsys
+):
+    settings = Settings(
+        alpaca_api_key=SecretStr("paper-key-secret"),
+        alpaca_secret_key=SecretStr("paper-secret-secret"),
+        _env_file=None,
+    )
+    journal = cli.DecisionJournal(tmp_path / "journal.jsonl")
+    attempts = 0
+
+    class FakeMonitor:
+        async def events(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary disconnect")
+            yield {"event": "fill", "order": {"client_order_id": "vg-test"}}
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli.asyncio, "sleep", no_sleep)
+    await cli._monitor_trade_updates(
+        retry_seconds=0,
+        max_connection_attempts=2,
+        monitor_factory=lambda *_args: FakeMonitor(),
+        journal=journal,
+    )
+
+    assert attempts == 2
+    assert json.loads(capsys.readouterr().out)["event"] == "fill"
+    journal_text = (tmp_path / "journal.jsonl").read_text()
+    assert "trade_update_monitor_error" in journal_text
+    assert "paper-key-secret" not in journal_text
+    assert "paper-secret-secret" not in journal_text
 
 
 @pytest.mark.asyncio

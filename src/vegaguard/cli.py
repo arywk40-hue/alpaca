@@ -3,6 +3,9 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from websockets.exceptions import WebSocketException
 
 from .config import get_settings
 from .data.alpaca import AlpacaHistoricalDataProvider
@@ -11,6 +14,7 @@ from .demo import build_offline_demo
 from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
+from .models import JournalEntry
 from .monitoring import PaperTradeUpdateMonitor
 from .preflight import PaperPreflight
 from .scheduler import MarketHoursScheduler
@@ -66,11 +70,45 @@ async def _read_only_cycle(cycles: int = 1, interval_seconds: int = 900) -> None
     print(json.dumps(results[0] if cycles == 1 else {"cycles": results}, indent=2))
 
 
-async def _monitor_trade_updates() -> None:
+async def _monitor_trade_updates(
+    *,
+    retry_seconds: float = 5.0,
+    max_connection_attempts: int | None = None,
+    monitor_factory: Any = None,
+    journal: DecisionJournal | None = None,
+) -> None:
     settings = get_settings()
-    monitor = PaperTradeUpdateMonitor(settings, DecisionJournal())
-    async for event in monitor.events():
-        print(json.dumps(event, indent=2))
+    if not settings.alpaca_api_key or not settings.alpaca_secret_key:
+        raise RuntimeError("Missing ALPACA_API_KEY or ALPACA_SECRET_KEY in .env")
+    if max_connection_attempts is not None and max_connection_attempts < 1:
+        raise ValueError("max_connection_attempts must be at least one")
+    monitor_factory = monitor_factory or PaperTradeUpdateMonitor
+    journal = journal or DecisionJournal()
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            monitor = monitor_factory(settings, journal)
+            async for event in monitor.events():
+                print(json.dumps(event, indent=2))
+            raise RuntimeError("paper trade-update stream ended")
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
+            journal.append(
+                JournalEntry(
+                    event="trade_update_monitor_error",
+                    payload={
+                        "status": "reconnecting",
+                        "error_type": type(exc).__name__,
+                        "connection_attempt": attempts,
+                        "retry_seconds": retry_seconds,
+                    },
+                )
+            )
+            if max_connection_attempts is not None and attempts >= max_connection_attempts:
+                return
+            await asyncio.sleep(retry_seconds)
 
 
 async def _lifecycle_evidence() -> None:
