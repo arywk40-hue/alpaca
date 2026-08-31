@@ -284,11 +284,10 @@ def test_dashboard_operator_mode_wires_controls_without_embedding_secrets():
 def test_social_dashboard_is_read_only_sanitized_proof_of_work():
     html = social_dashboard_html()
     for fragment in (
-        "LIVE PROOF OF WORK",
-        "The agent is working.",
-        "PAPER ONLY",
+        "paper session monitor",
+        "PAPER ACCOUNT",
         "EXIT PENDING",
-        "Live agent timeline",
+        "Agent event log",
         "UNREALIZED",
         "EventSource('/events')",
     ):

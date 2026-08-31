@@ -6,8 +6,8 @@ API keys, bearer tokens, provider order IDs and exact plan IDs.
 
 ## Live UI for screenshots
 
-Open `http://127.0.0.1:8001/social`. This dedicated read-only view shows the animated
-agent heartbeat, market state, last/next cycle, durable event count, opportunities,
+Open `http://127.0.0.1:8001/social`. This dedicated read-only trading-terminal view
+shows the scheduler state, market state, last/next cycle, durable event count, opportunities,
 reprices, paper entry fill, open unrealized P&L, lifecycle progress and sanitized live
 timeline. It contains no operator controls or identifiers.
 

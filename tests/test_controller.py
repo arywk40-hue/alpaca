@@ -196,7 +196,7 @@ def test_dashboard_routes_manage_the_backend_controller_lifecycle(tmp_path):
     with TestClient(create_app(controller=controller)) as client:
         social = client.get("/social")
         assert social.status_code == 200
-        assert "LIVE PROOF OF WORK" in social.text
+        assert "paper session monitor" in social.text
         assert "operator-token" not in social.text
         state = client.get("/dashboard/state")
         assert state.status_code == 200
