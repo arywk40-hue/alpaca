@@ -302,6 +302,47 @@ async def test_scheduler_runs_bounded_cycles_and_journals_outcomes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_manages_positions_each_minute_between_entry_scans(tmp_path):
+    sleeps: list[float] = []
+
+    class ManagedCycle:
+        run_calls = 0
+        management_calls = 0
+
+        async def run_once(self):
+            self.run_calls += 1
+            return {"status": "no_trade", "reason": "no qualifying setup"}
+
+        async def manage_open_spreads(self):
+            self.management_calls += 1
+            return {"status": "ok", "managed": [{"status": "hold"}]}
+
+    async def sleep(seconds: float):
+        sleeps.append(seconds)
+
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    cycle = ManagedCycle()
+    outcomes = await MarketHoursScheduler(
+        cycle,
+        journal,
+        interval_seconds=180,
+        management_interval_seconds=60,
+        sleep=sleep,
+    ).run(max_cycles=2)
+
+    assert len(outcomes) == 2
+    assert cycle.run_calls == 2
+    # Full cycles manage before scanning; two additional checks run at +60s and +120s.
+    assert cycle.management_calls == 4
+    assert sleeps == [60, 60, 60]
+    management_events = [
+        entry for entry in journal.latest() if entry["event"] == "position_management_cycle"
+    ]
+    assert len(management_events) == 2
+    assert all(entry["payload"]["status"] == "ok" for entry in management_events)
+
+
+@pytest.mark.asyncio
 async def test_scheduler_preserves_an_empty_timeout_type_in_the_audit(tmp_path):
     class TimeoutCycle:
         async def run_once(self):

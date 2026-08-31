@@ -28,6 +28,7 @@ class MarketHoursScheduler:
         journal: DecisionJournal,
         *,
         interval_seconds: int = 900,
+        management_interval_seconds: int = 60,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         session_id: str | None = None,
@@ -35,9 +36,12 @@ class MarketHoursScheduler:
     ):
         if interval_seconds < 60:
             raise ValueError("scheduler interval must be at least 60 seconds")
+        if management_interval_seconds < 60:
+            raise ValueError("position management interval must be at least 60 seconds")
         self.cycle = cycle
         self.journal = journal
         self.interval_seconds = interval_seconds
+        self.management_interval_seconds = min(management_interval_seconds, interval_seconds)
         self.sleep = sleep
         self.now = now
         self.session_id = session_id
@@ -63,6 +67,7 @@ class MarketHoursScheduler:
                         "status": "running",
                         "cycle_number": cycle_number,
                         "interval_seconds": self.interval_seconds,
+                        "management_interval_seconds": self.management_interval_seconds,
                         "next_run_at": None,
                         "session_id": self.session_id,
                         "process_id": self.process_id,
@@ -106,6 +111,7 @@ class MarketHoursScheduler:
                         else "stopped",
                         "cycle_number": cycle_number,
                         "interval_seconds": self.interval_seconds,
+                        "management_interval_seconds": self.management_interval_seconds,
                         "last_cycle_status": outcome.get("status", "completed"),
                         "last_error": outcome.get("reason") if cycle_failed else None,
                         "next_run_at": next_run_at.isoformat() if should_continue else None,
@@ -121,8 +127,39 @@ class MarketHoursScheduler:
                 )
             )
             if should_continue:
-                await self.sleep(self.interval_seconds)
+                await self._wait_for_next_cycle(market_open=market_open)
         return outcomes
+
+    async def _wait_for_next_cycle(self, *, market_open: bool | None) -> None:
+        """Evaluate open-position exits between the slower entry scans."""
+        manager = getattr(self.cycle, "manage_open_spreads", None)
+        if (
+            market_open is not True
+            or not callable(manager)
+            or self.management_interval_seconds >= self.interval_seconds
+        ):
+            await self.sleep(self.interval_seconds)
+            return
+
+        elapsed = 0
+        while elapsed < self.interval_seconds:
+            delay = min(self.management_interval_seconds, self.interval_seconds - elapsed)
+            await self.sleep(delay)
+            elapsed += delay
+            if elapsed >= self.interval_seconds:
+                return
+            try:
+                outcome = await manager()
+            except (HTTPError, OSError, RuntimeError, TimeoutError) as exc:
+                outcome = {
+                    "status": "management_error",
+                    "error_type": type(exc).__name__,
+                    "reason": str(exc) or type(exc).__name__,
+                }
+            self.journal.append(JournalEntry(event="position_management_cycle", payload=outcome))
+            if outcome.get("status") == "market_closed":
+                await self.sleep(self.interval_seconds - elapsed)
+                return
 
     @staticmethod
     def _market_open(outcome: dict[str, Any]) -> bool | None:
