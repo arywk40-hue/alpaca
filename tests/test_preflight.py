@@ -24,7 +24,7 @@ class _MCP:
 
 @pytest.mark.asyncio
 async def test_preflight_is_read_only_and_saves_no_secrets(tmp_path):
-    report = await PaperPreflight(Settings(), alpaca=_Alpaca(), mcp=_MCP()).run()
+    report = await PaperPreflight(Settings(_env_file=None), alpaca=_Alpaca(), mcp=_MCP()).run()
     assert report["status"] == "ready"
     assert report["paper_only"] is True
     assert report["market_data"]["option_snapshot_count"] == 1
@@ -38,7 +38,9 @@ async def test_preflight_reports_missing_mcp_capability_without_executing():
         async def tool_schemas(self):
             return [{"name": "get_clock"}]
 
-    report = await PaperPreflight(Settings(), alpaca=_Alpaca(), mcp=IncompleteMCP()).run()
+    report = await PaperPreflight(
+        Settings(_env_file=None), alpaca=_Alpaca(), mcp=IncompleteMCP()
+    ).run()
     assert report["status"] == "incomplete"
     assert "place_option_order" in report["mcp"]["missing_required_tools"]
 
@@ -46,13 +48,17 @@ async def test_preflight_reports_missing_mcp_capability_without_executing():
 @pytest.mark.asyncio
 async def test_preflight_validates_optional_submission_account_id():
     matching = await PaperPreflight(
-        Settings(alpaca_account_id="paper-account"), alpaca=_Alpaca(), mcp=_MCP()
+        Settings(_env_file=None, alpaca_account_id="paper-account"),
+        alpaca=_Alpaca(),
+        mcp=_MCP(),
     ).run()
     assert matching["status"] == "ready"
     assert matching["rest"]["account_id_matches_configuration"] is True
 
     mismatched = await PaperPreflight(
-        Settings(alpaca_account_id="different-paper-account"), alpaca=_Alpaca(), mcp=_MCP()
+        Settings(_env_file=None, alpaca_account_id="different-paper-account"),
+        alpaca=_Alpaca(),
+        mcp=_MCP(),
     ).run()
     assert mismatched["status"] == "incomplete"
     assert mismatched["rest"]["account_id_matches_configuration"] is False

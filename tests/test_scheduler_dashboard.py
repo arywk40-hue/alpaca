@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -344,6 +345,37 @@ async def test_scheduler_recovers_after_a_temporary_cycle_error(tmp_path):
     assert status["status"] == "stopped"
     assert status["last_error"] is None
     assert status["last_successful_cycle_at"]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_scheduler_retains_only_a_bounded_diagnostic_window(tmp_path):
+    class ContinuousCycle:
+        calls = 0
+
+        async def run_once(self):
+            self.calls += 1
+            return {"status": "no_trade", "cycle": self.calls}
+
+    cycle = ContinuousCycle()
+
+    async def stop_after_105_cycles(_seconds):
+        if cycle.calls >= 105:
+            raise asyncio.CancelledError
+
+    scheduler = MarketHoursScheduler(
+        cycle,
+        DecisionJournal(tmp_path / "journal.jsonl"),
+        interval_seconds=60,
+        sleep=stop_after_105_cycles,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler.run()
+
+    assert cycle.calls == 105
+    assert len(scheduler.recent_outcomes) == 100
+    assert scheduler.recent_outcomes[0]["cycle"] == 6
+    assert scheduler.recent_outcomes[-1]["cycle"] == 105
 
 
 def test_scheduler_refuses_an_overly_fast_loop(tmp_path):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -41,13 +42,18 @@ class MarketHoursScheduler:
         self.now = now
         self.session_id = session_id
         self.process_id = process_id
+        # Continuous workers never return their accumulated results, so retain
+        # only a bounded diagnostic window while the journal remains the full
+        # durable history.
+        self.recent_outcomes: deque[dict[str, Any]] = deque(maxlen=100)
 
     async def run(self, *, max_cycles: int | None = None) -> list[dict[str, Any]]:
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be at least one")
         outcomes: list[dict[str, Any]] = []
-        while max_cycles is None or len(outcomes) < max_cycles:
-            cycle_number = len(outcomes) + 1
+        cycle_number = 0
+        while max_cycles is None or cycle_number < max_cycles:
+            cycle_number += 1
             started_at = self.now().astimezone(UTC)
             self.journal.append(
                 JournalEntry(
@@ -79,9 +85,11 @@ class MarketHoursScheduler:
                     "error_type": type(exc).__name__,
                     "reason": str(exc) or type(exc).__name__,
                 }
-            outcomes.append(outcome)
+            self.recent_outcomes.append(outcome)
+            if max_cycles is not None:
+                outcomes.append(outcome)
             self.journal.append(JournalEntry(event="scheduled_cycle", payload=outcome))
-            should_continue = max_cycles is None or len(outcomes) < max_cycles
+            should_continue = max_cycles is None or cycle_number < max_cycles
             heartbeat_at = self.now().astimezone(UTC)
             next_run_at = heartbeat_at + timedelta(seconds=self.interval_seconds)
             cycle_failed = outcome.get("status") == "cycle_error"
