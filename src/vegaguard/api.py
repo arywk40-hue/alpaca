@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from .config import get_settings
 from .controller import DashboardAgentController
-from .dashboard import dashboard_html, dashboard_state
+from .dashboard import dashboard_html, dashboard_state, social_dashboard_html
 from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
@@ -81,6 +81,11 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
     @api.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         return dashboard_html()
+
+    @api.get("/social", response_class=HTMLResponse)
+    async def social_dashboard() -> str:
+        """Public, read-only proof-of-work view with no operator controls or IDs."""
+        return social_dashboard_html()
 
     @api.get("/health")
     async def health() -> dict:

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from vegaguard.dashboard import dashboard_html, dashboard_state
+from vegaguard.dashboard import dashboard_html, dashboard_state, social_dashboard_html
 from vegaguard.journal import DecisionJournal
 from vegaguard.models import (
     JournalEntry,
@@ -279,6 +279,28 @@ def test_dashboard_operator_mode_wires_controls_without_embedding_secrets():
         assert fragment in html
     assert "dashboard-test-token" not in html
     assert "wrong-dashboard-token" not in html
+
+
+def test_social_dashboard_is_read_only_sanitized_proof_of_work():
+    html = social_dashboard_html()
+    for fragment in (
+        "LIVE PROOF OF WORK",
+        "The agent is working.",
+        "PAPER ONLY",
+        "EXIT PENDING",
+        "Live agent timeline",
+        "UNREALIZED",
+        "EventSource('/events')",
+    ):
+        assert fragment in html
+    for forbidden in (
+        "operator-token",
+        "Authorization",
+        "Submit exact approved plan",
+        "client_order_id",
+        "plan_id",
+    ):
+        assert forbidden not in html
 
 
 class _Cycle:

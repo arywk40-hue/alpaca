@@ -4,6 +4,21 @@ These posts are written for LinkedIn, X, Threads or a hackathon community page.
 Keep the disclosures intact. Before publishing a screenshot, crop out account IDs,
 API keys, bearer tokens, provider order IDs and exact plan IDs.
 
+## Live UI for screenshots
+
+Open `http://127.0.0.1:8001/social`. This dedicated read-only view shows the animated
+agent heartbeat, market state, last/next cycle, durable event count, opportunities,
+reprices, paper entry fill, open unrealized P&L, lifecycle progress and sanitized live
+timeline. It contains no operator controls or identifiers.
+
+Use these five crops with the posts below:
+
+1. Full hero and `PAPER ONLY` badges.
+2. Heartbeat plus the six evidence metrics.
+3. Paper lifecycle strip ending at `EXIT PENDING`.
+4. Live agent timeline during an open-market scan.
+5. Production-threshold and hypothetical-research strip.
+
 ## Post 1 — Project launch
 
 **Visual:** `assets/vegaguard-cover-v1.png`
