@@ -115,7 +115,20 @@ async def test_dashboard_guardian_resumes_existing_fill_without_starting_schedul
 
     class ExistingPositionCycle(ClosedCycle):
         async def manage_open_spreads(self):
-            return {"status": "market_closed", "managed": []}
+            return {
+                "status": "market_closed",
+                "managed": [{"status": "recovered_market_closed"}],
+                "managed_position_count": 1,
+                "recovered_spread_count": 1,
+                "matched_leg_count": 2,
+                "matched_legs": [
+                    {"symbol": "SPY260918C00650000"},
+                    {"symbol": "SPY260918C00655000"},
+                ],
+                "unmatched_spread_count": 0,
+                "last_reconciliation_at": "2026-09-01T01:00:00+00:00",
+                "reconciliation_status": "matched",
+            }
 
     async def blocked_sleep(_seconds):
         sleep_started.set()
@@ -135,7 +148,33 @@ async def test_dashboard_guardian_resumes_existing_fill_without_starting_schedul
     assert status["controller_running"] is False
     assert status["position_guardian_process_running"] is True
     assert status["position_guardian"]["status"] == "waiting_market"
+    assert status["position_guardian"]["managed_position_count"] == 1
+    assert status["position_guardian"]["recovered_spread_count"] == 1
+    assert status["position_guardian"]["matched_leg_count"] == 2
+    assert status["position_guardian"]["last_reconciliation_at"]
     await controller.aclose()
+
+
+def test_dashboard_explains_external_cli_scheduler_heartbeat(tmp_path):
+    controller = _controller(tmp_path)
+    controller.journal.append(
+        JournalEntry(
+            event="scheduler_heartbeat",
+            payload={
+                "status": "waiting",
+                "interval_seconds": 900,
+                "worker_kind": "external_cli",
+                "session_id": "vg-cli-test",
+                "process_id": 123,
+            },
+        )
+    )
+
+    status = controller.status()
+    assert status["scheduler"]["status"] == "waiting"
+    assert status["scheduler_process_running"] is False
+    assert status["scheduler"]["source"] == "external_cli"
+    assert "separate CLI process" in status["scheduler"]["ownership_explanation"]
 
 
 @pytest.mark.asyncio

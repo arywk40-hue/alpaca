@@ -97,11 +97,35 @@ class DashboardAgentController:
             "process_running": monitor_running,
             "last_event_at": self._monitor.get("last_event_at"),
         }
+        scheduler_running = self._is_running(self._scheduler_task)
+        heartbeat_active = scheduler["status"] in {"running", "waiting"}
+        if scheduler_running:
+            scheduler_source = "in_process_controller"
+            scheduler_explanation = "scheduler task is owned by this dashboard process"
+        elif heartbeat_active and scheduler.get("worker_kind") in {None, "external_cli"}:
+            scheduler_source = "external_cli"
+            scheduler_explanation = (
+                "durable heartbeat is active, but the scheduler runs in a separate CLI process"
+            )
+        elif heartbeat_active:
+            scheduler_source = "external_process"
+            scheduler_explanation = (
+                "durable heartbeat is active, but it is owned by another backend process"
+            )
+        else:
+            scheduler_source = "durable_history"
+            scheduler_explanation = "no scheduler task is running in this dashboard process"
+        scheduler = {
+            **scheduler,
+            "source": scheduler_source,
+            "process_running": scheduler_running,
+            "ownership_explanation": scheduler_explanation,
+        }
         return {
             "scheduler": scheduler,
             "position_guardian": guardian,
-            "controller_running": self._is_running(self._scheduler_task),
-            "scheduler_process_running": self._is_running(self._scheduler_task),
+            "controller_running": scheduler_running,
+            "scheduler_process_running": scheduler_running,
             "position_guardian_process_running": self._is_running(self._guardian_task),
             "lifecycle_running": self._is_running(self._guardian_task)
             or self._is_running(self._monitor_task),
@@ -139,6 +163,7 @@ class DashboardAgentController:
             interval_seconds=interval_seconds,
             session_id=self._session_id,
             process_id=self._process_id,
+            worker_kind="dashboard_controller",
         )
         started_at = datetime.now(UTC)
         self.journal.append(
@@ -154,6 +179,7 @@ class DashboardAgentController:
                     "next_run_at": (started_at + timedelta(seconds=interval_seconds)).isoformat(),
                     "session_id": self._session_id,
                     "process_id": self._process_id,
+                    "worker_kind": "dashboard_controller",
                     "last_cycle_started_at": None,
                     "last_cycle_completed_at": None,
                     "last_successful_cycle_at": None,
@@ -526,7 +552,15 @@ class DashboardAgentController:
                     "last_successful_update_at": None if is_error else now.isoformat(),
                     "last_error": outcome.get("reason") if is_error else None,
                     "error_type": outcome.get("error_type") if is_error else None,
-                    "managed_position_count": len(outcome.get("managed") or []),
+                    "managed_position_count": outcome.get(
+                        "managed_position_count", len(outcome.get("managed") or [])
+                    ),
+                    "recovered_spread_count": outcome.get("recovered_spread_count"),
+                    "matched_leg_count": outcome.get("matched_leg_count"),
+                    "matched_legs": outcome.get("matched_legs") or [],
+                    "unmatched_spread_count": outcome.get("unmatched_spread_count"),
+                    "last_reconciliation_at": outcome.get("last_reconciliation_at"),
+                    "reconciliation_status": outcome.get("reconciliation_status"),
                     "market_open": False
                     if outcome_status == "market_closed"
                     else None
@@ -534,6 +568,7 @@ class DashboardAgentController:
                     else True,
                     "session_id": self._session_id,
                     "process_id": self._process_id,
+                    "worker_kind": "dashboard_controller",
                 },
             )
         )

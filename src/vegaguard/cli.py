@@ -1,9 +1,11 @@
 import argparse
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from websockets.exceptions import WebSocketException
 
@@ -249,7 +251,12 @@ async def _run_scheduler(interval_seconds: int, max_cycles: int | None) -> None:
     journal = DecisionJournal()
     executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
     scheduler = MarketHoursScheduler(
-        AutonomousCycle(settings, executor), journal, interval_seconds=interval_seconds
+        AutonomousCycle(settings, executor),
+        journal,
+        interval_seconds=interval_seconds,
+        session_id=f"vg-cli-{uuid4().hex[:20]}",
+        process_id=os.getpid(),
+        worker_kind="external_cli",
     )
     print(json.dumps(await scheduler.run(max_cycles=max_cycles), indent=2))
 

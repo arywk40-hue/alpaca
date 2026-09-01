@@ -354,11 +354,63 @@ async def test_lifecycle_manager_never_duplicates_an_ambiguous_exit_attempt(tmp_
 
     cycle._account_state = account_state
     cycle.alpaca.orders = orders
-    assert await cycle.manage_open_spreads() == {"status": "ok", "managed": []}
+    managed = await cycle.manage_open_spreads()
+    assert managed["status"] == "ok"
+    assert managed["managed_position_count"] == 1
+    assert managed["managed"][0]["status"] == "exit_pending"
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_manager_does_nothing_when_market_is_closed(tmp_path):
+async def test_restart_reconciles_existing_spread_while_market_is_closed_without_quotes(tmp_path):
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test")
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: now,
+    )
+
+    async def account_state():
+        return (
+            {},
+            {"is_open": False},
+            [
+                {"symbol": entry.legs[0].symbol, "qty": "1"},
+                {"symbol": entry.legs[1].symbol, "qty": "-1"},
+            ],
+        )
+
+    async def orders():
+        return []
+
+    async def forbidden_snapshots(*_args, **_kwargs):
+        raise AssertionError("closed-market reconciliation must not evaluate quotes")
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = orders
+    cycle.alpaca.option_snapshots = forbidden_snapshots
+    managed = await cycle.manage_open_spreads()
+
+    assert managed["status"] == "market_closed"
+    assert managed["managed_position_count"] == 1
+    assert managed["recovered_spread_count"] == 1
+    assert managed["matched_leg_count"] == 2
+    assert managed["unmatched_spread_count"] == 0
+    assert managed["last_reconciliation_at"] == now.isoformat()
+    assert managed["quote_evaluation_performed"] is False
+    assert managed["exit_submission_enabled"] is False
+    assert managed["managed"][0]["status"] == "recovered_market_closed"
+    assert {leg["symbol"] for leg in managed["matched_legs"]} == {
+        entry.legs[0].symbol,
+        entry.legs[1].symbol,
+    }
+
+
+@pytest.mark.asyncio
+async def test_closed_market_reconciliation_fails_safely_on_partial_legs(tmp_path):
     settings = Settings(dry_run=True)
     journal = DecisionJournal(tmp_path / "journal.jsonl")
     entry = plan()
@@ -366,14 +418,24 @@ async def test_lifecycle_manager_does_nothing_when_market_is_closed(tmp_path):
     cycle = AutonomousCycle(settings, PaperExecutionAgent(settings, journal, NoCallMCP()))
 
     async def account_state():
-        return {}, {"is_open": False}, []
+        return {}, {"is_open": False}, [{"symbol": entry.legs[0].symbol, "qty": "1"}]
 
-    async def forbidden_orders():
-        raise AssertionError("closed-market guardian must not inspect or mutate orders")
+    async def orders():
+        return []
+
+    async def forbidden_snapshots(*_args, **_kwargs):
+        raise AssertionError("partial closed-market legs must not reach quote evaluation")
 
     cycle._account_state = account_state
-    cycle.alpaca.orders = forbidden_orders
-    assert await cycle.manage_open_spreads() == {"status": "market_closed", "managed": []}
+    cycle.alpaca.orders = orders
+    cycle.alpaca.option_snapshots = forbidden_snapshots
+    managed = await cycle.manage_open_spreads()
+
+    assert managed["status"] == "market_closed"
+    assert managed["managed_position_count"] == 0
+    assert managed["unmatched_spread_count"] == 1
+    assert managed["reconciliation_status"] == "partial_or_unmatched"
+    assert managed["managed"][0]["status"] == "position_mismatch"
 
 
 @pytest.mark.asyncio

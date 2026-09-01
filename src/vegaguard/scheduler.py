@@ -33,6 +33,7 @@ class MarketHoursScheduler:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         session_id: str | None = None,
         process_id: int | None = None,
+        worker_kind: str = "external_cli",
     ):
         if interval_seconds < 60:
             raise ValueError("scheduler interval must be at least 60 seconds")
@@ -46,6 +47,7 @@ class MarketHoursScheduler:
         self.now = now
         self.session_id = session_id
         self.process_id = process_id
+        self.worker_kind = worker_kind
         # Continuous workers never return their accumulated results, so retain
         # only a bounded diagnostic window while the journal remains the full
         # durable history.
@@ -71,6 +73,7 @@ class MarketHoursScheduler:
                         "next_run_at": None,
                         "session_id": self.session_id,
                         "process_id": self.process_id,
+                        "worker_kind": self.worker_kind,
                         "last_cycle_started_at": started_at.isoformat(),
                     },
                 )
@@ -123,6 +126,7 @@ class MarketHoursScheduler:
                         "next_run_at": next_run_at.isoformat() if should_continue else None,
                         "session_id": self.session_id,
                         "process_id": self.process_id,
+                        "worker_kind": self.worker_kind,
                         "last_cycle_started_at": started_at.isoformat(),
                         "last_cycle_completed_at": heartbeat_at.isoformat(),
                         "last_successful_cycle_at": None
@@ -188,7 +192,15 @@ class MarketHoursScheduler:
                     "last_successful_update_at": None if is_error else now.isoformat(),
                     "last_error": outcome.get("reason") if is_error else None,
                     "error_type": outcome.get("error_type") if is_error else None,
-                    "managed_position_count": len(outcome.get("managed") or []),
+                    "managed_position_count": outcome.get(
+                        "managed_position_count", len(outcome.get("managed") or [])
+                    ),
+                    "recovered_spread_count": outcome.get("recovered_spread_count"),
+                    "matched_leg_count": outcome.get("matched_leg_count"),
+                    "matched_legs": outcome.get("matched_legs") or [],
+                    "unmatched_spread_count": outcome.get("unmatched_spread_count"),
+                    "last_reconciliation_at": outcome.get("last_reconciliation_at"),
+                    "reconciliation_status": outcome.get("reconciliation_status"),
                     "market_open": False
                     if status == "market_closed"
                     else None
@@ -196,6 +208,7 @@ class MarketHoursScheduler:
                     else True,
                     "session_id": self.session_id,
                     "process_id": self.process_id,
+                    "worker_kind": self.worker_kind,
                 },
             )
         )

@@ -106,10 +106,12 @@ class AutonomousCycle:
     async def manage_open_spreads(self) -> dict[str, Any]:
         """Evaluate filled tracked spreads and submit only deterministic close orders."""
         _, clock, positions = await self._account_state()
-        if not bool(clock.get("is_open")):
-            return {"status": "market_closed", "managed": []}
+        market_open = bool(clock.get("is_open"))
+        reconciled_at = self._now().astimezone(UTC)
         guardian = PositionGuardian()
         managed: list[dict[str, Any]] = []
+        recovered: list[dict[str, Any]] = []
+        mismatched: list[dict[str, Any]] = []
         orders = await self.alpaca.orders()
         filled_orders = {
             str(order.get("client_order_id")): order
@@ -122,12 +124,18 @@ class AutonomousCycle:
             if plan is not None and not plan.is_closing:
                 tracked.setdefault(client_order_id, plan)
         for client_order_id, plan in tracked.items():
-            if not client_order_id or self.executor.journal.has_exit_for(client_order_id):
-                continue
-            if plan.is_closing or plan.strategy != "debit_spread":
+            if not client_order_id or plan.is_closing or plan.strategy != "debit_spread":
                 continue
             position_ok, position_evidence = self._provider_position_review(plan, positions)
             if not position_ok:
+                mismatch = {
+                    "client_order_id": client_order_id,
+                    "plan_id": plan.plan_id,
+                    "underlying": plan.underlying,
+                    "status": "position_mismatch",
+                    "reason": "provider positions do not match the tracked spread",
+                    "position_evidence": position_evidence,
+                }
                 self.executor.journal.append(
                     JournalEntry(
                         event="position_guardian_rejected",
@@ -138,12 +146,31 @@ class AutonomousCycle:
                         },
                     )
                 )
+                mismatched.append(mismatch)
+                managed.append(mismatch)
+                continue
+            recovery = {
+                "client_order_id": client_order_id,
+                "plan_id": plan.plan_id,
+                "underlying": plan.underlying,
+                "matched_legs": position_evidence["matched_legs"],
+            }
+            recovered.append(recovery)
+            if self.executor.journal.has_exit_for(client_order_id):
                 managed.append(
                     {
-                        "client_order_id": client_order_id,
-                        "status": "position_mismatch",
-                        "reason": "provider positions do not match the tracked spread",
-                        "position_evidence": position_evidence,
+                        **recovery,
+                        "status": "exit_pending",
+                        "reason": "an exit submission intent already exists; no duplicate allowed",
+                    }
+                )
+                continue
+            if not market_open:
+                managed.append(
+                    {
+                        **recovery,
+                        "status": "recovered_market_closed",
+                        "reason": "position reconciled read-only; quotes and exits are market-gated",
                     }
                 )
                 continue
@@ -213,7 +240,7 @@ class AutonomousCycle:
                 continue
             exit_plan = guardian.closing_plan(plan, executable_exit_value=credit)
             exit_gate = GateResult(
-                approved=self.settings.alpaca_paper_trade and bool(clock.get("is_open")),
+                approved=self.settings.alpaca_paper_trade and market_open,
                 reasons=["paper account, open market, tracked legs, and fresh exit quotes passed"],
             )
             result = await self.executor.submit_exit(
@@ -227,7 +254,32 @@ class AutonomousCycle:
                     "exit_client_order_id": exit_plan.client_order_id,
                 }
             )
-        return {"status": "ok", "managed": managed}
+        matched_legs = [
+            {**leg, "plan_id": item["plan_id"], "underlying": item["underlying"]}
+            for item in recovered
+            for leg in item["matched_legs"]
+        ]
+        return {
+            "status": "ok" if market_open else "market_closed",
+            "market_open": market_open,
+            "managed": managed,
+            "managed_position_count": len(recovered),
+            "recovered_spread_count": len(recovered),
+            "matched_leg_count": len(matched_legs),
+            "matched_legs": matched_legs,
+            "unmatched_spread_count": len(mismatched),
+            "last_reconciliation_at": reconciled_at.isoformat(),
+            "reconciliation_status": "partial_or_unmatched"
+            if mismatched
+            else "matched"
+            if recovered
+            else "no_tracked_spreads",
+            "quote_evaluation_performed": market_open,
+            "exit_submission_enabled": market_open
+            and self.settings.alpaca_paper_trade
+            and self.settings.allow_order_execution
+            and not self.settings.dry_run,
+        }
 
     def _recorded_entry_debit(self, plan: TradePlan, order: dict) -> float:
         recorded = self.executor.journal.entry_debit_for(plan.client_order_id)
@@ -282,9 +334,19 @@ class AutonomousCycle:
             for symbol, expected_qty in expected.items()
             if actual.get(symbol, 0.0) != expected_qty
         ]
+        matched_legs = [
+            {
+                "symbol": symbol,
+                "expected_qty": expected_qty,
+                "actual_qty": actual.get(symbol, 0.0),
+            }
+            for symbol, expected_qty in expected.items()
+            if actual.get(symbol, 0.0) == expected_qty
+        ]
         return not mismatches, {
             "expected_legs": expected,
             "actual_tracked_legs": {symbol: actual.get(symbol, 0.0) for symbol in expected},
+            "matched_legs": matched_legs,
             "mismatches": mismatches,
         }
 
