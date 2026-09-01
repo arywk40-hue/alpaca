@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from httpx import HTTPError
 from websockets.exceptions import WebSocketException
 
 from .config import Settings, get_settings
@@ -18,7 +19,7 @@ from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
 from .models import JournalEntry
-from .monitoring import PaperTradeUpdateMonitor
+from .monitoring import OrderLifecycle, PaperTradeUpdateMonitor
 from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
 
@@ -43,6 +44,7 @@ class DashboardAgentController:
         monitor_factory: Callable[[Settings, DecisionJournal], PaperTradeUpdateMonitor]
         | None = None,
         enable_trade_update_monitor: bool = True,
+        worker_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.journal = journal or DecisionJournal()
         self.settings_factory = settings_factory
@@ -51,9 +53,11 @@ class DashboardAgentController:
         self.demo_builder = demo_builder
         self.monitor_factory = monitor_factory or PaperTradeUpdateMonitor
         self.enable_trade_update_monitor = enable_trade_update_monitor
+        self.worker_sleep = worker_sleep
         self._scheduler_task: asyncio.Task[None] | None = None
         self._simulation_task: asyncio.Task[None] | None = None
         self._monitor_task: asyncio.Task[None] | None = None
+        self._guardian_task: asyncio.Task[None] | None = None
         self._interval_seconds: int | None = None
         self._simulation: dict[str, Any] = {"status": "idle", "last_error": None}
         self._monitor: dict[str, Any] = {
@@ -75,17 +79,36 @@ class DashboardAgentController:
 
     def status(self) -> dict[str, Any]:
         scheduler = self.journal.scheduler_status()
+        guardian = self.journal.guardian_status()
+        durable_monitor = self.journal.monitor_status()
         settings = self.settings_factory()
         configuration_ready = (
             settings.alpaca_paper_trade and settings.allow_order_execution and not settings.dry_run
         )
+        monitor_running = self._is_running(self._monitor_task)
+        monitor = {
+            **durable_monitor,
+            "status": self._monitor["status"]
+            if monitor_running or self._monitor["status"] in {"disabled", "not_configured"}
+            else durable_monitor["status"]
+            if durable_monitor["status"] != "never_started"
+            else "stopped",
+            "controller_status": self._monitor["status"],
+            "process_running": monitor_running,
+            "last_event_at": self._monitor.get("last_event_at"),
+        }
         return {
             "scheduler": scheduler,
+            "position_guardian": guardian,
             "controller_running": self._is_running(self._scheduler_task),
+            "scheduler_process_running": self._is_running(self._scheduler_task),
+            "position_guardian_process_running": self._is_running(self._guardian_task),
+            "lifecycle_running": self._is_running(self._guardian_task)
+            or self._is_running(self._monitor_task),
             "session_id": self._session_id,
             "process_id": self._process_id,
             "simulation": self._simulation,
-            "trade_update_monitor": self._monitor,
+            "trade_update_monitor": monitor,
             "paper_execution": {
                 "locked": not configuration_ready
                 or not self._paper_armed
@@ -139,8 +162,15 @@ class DashboardAgentController:
             )
         )
         self._scheduler_task = asyncio.create_task(self._run_scheduler(scheduler))
-        await self._start_trade_update_monitor(settings)
+        await self.start_lifecycle_workers(settings=settings)
         return {"status": "started", **self.status()}
+
+    async def start_lifecycle_workers(self, *, settings: Settings | None = None) -> None:
+        """Resume read-only lifecycle discovery independently of entry scanning."""
+        settings = settings or self.settings_factory()
+        await self._start_trade_update_monitor(settings)
+        if self.journal.open_entry_plans() and not self._is_running(self._guardian_task):
+            self._guardian_task = asyncio.create_task(self._run_position_guardian(settings))
 
     async def _run_scheduler(self, scheduler: MarketHoursScheduler) -> None:
         try:
@@ -157,7 +187,6 @@ class DashboardAgentController:
         task = self._scheduler_task
         if task is None or task.done():
             self._scheduler_task = None
-            await self._stop_trade_update_monitor()
             return {"status": "already_stopped", **self.status()}
         task.cancel()
         try:
@@ -165,8 +194,8 @@ class DashboardAgentController:
         except asyncio.CancelledError:
             pass
         self._scheduler_task = None
-        await self._stop_trade_update_monitor()
         self._record_heartbeat("stopped")
+        await self.start_lifecycle_workers()
         return {"status": "stopped", **self.status()}
 
     async def arm_paper_execution(self, confirmation: str) -> dict[str, Any]:
@@ -237,6 +266,8 @@ class DashboardAgentController:
             )
         )
         await self.stop_shadow()
+        await self._stop_position_guardian()
+        await self._stop_trade_update_monitor()
         await self._stop_simulation()
         return {"status": "emergency_stopped", **self.status()}
 
@@ -305,6 +336,7 @@ class DashboardAgentController:
 
     async def aclose(self) -> None:
         await self.stop_shadow()
+        await self._stop_position_guardian()
         await self._stop_trade_update_monitor()
         await self._stop_simulation()
         self._paper_armed = False
@@ -331,35 +363,203 @@ class DashboardAgentController:
         self._monitor_task = asyncio.create_task(self._run_trade_update_monitor(settings))
 
     async def _run_trade_update_monitor(self, settings: Settings) -> None:
+        attempts = 0
+        last_successful_update_at: str | None = None
+        next_event: asyncio.Task[Any] | None = None
         try:
             while True:
+                attempts += 1
                 try:
+                    await self._reconcile_orders_read_only(settings)
+                    self._record_monitor_heartbeat(
+                        status="reconciling",
+                        attempt=attempts,
+                        last_successful_update_at=last_successful_update_at,
+                    )
                     monitor = self.monitor_factory(settings, self.journal)
-                    async for _event in monitor.events():
+                    iterator = monitor.events().__aiter__()
+                    next_event = asyncio.create_task(anext(iterator))
+                    self._record_monitor_heartbeat(
+                        status="connected",
+                        attempt=attempts,
+                        last_successful_update_at=last_successful_update_at,
+                    )
+                    while True:
+                        done, _ = await asyncio.wait({next_event}, timeout=30)
+                        if not done:
+                            self._record_monitor_heartbeat(
+                                status="connected_idle",
+                                attempt=attempts,
+                                last_successful_update_at=last_successful_update_at,
+                            )
+                            continue
+                        try:
+                            _event = next_event.result()
+                        except StopAsyncIteration as exc:
+                            raise RuntimeError("paper trade-update stream ended") from exc
+                        last_successful_update_at = datetime.now(UTC).isoformat()
                         self._monitor = {
-                            "status": "running",
+                            "status": "connected",
                             "last_error": None,
-                            "last_event_at": datetime.now(UTC).isoformat(),
+                            "last_event_at": last_successful_update_at,
                         }
-                    raise RuntimeError("paper trade-update stream ended")
-                except (OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
+                        self._record_monitor_heartbeat(
+                            status="connected",
+                            attempt=attempts,
+                            last_successful_update_at=last_successful_update_at,
+                        )
+                        next_event = asyncio.create_task(anext(iterator))
+                except (
+                    OSError,
+                    HTTPError,
+                    RuntimeError,
+                    TimeoutError,
+                    WebSocketException,
+                ) as exc:
+                    retry_seconds = min(5 * (2 ** (attempts - 1)), 60)
+                    next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
                     self._monitor = {
-                        "status": "error",
+                        "status": "reconnecting",
                         "last_error": f"{type(exc).__name__}: {exc}",
                         "last_event_at": self._monitor.get("last_event_at"),
                     }
                     self.journal.append(
                         JournalEntry(event="trade_update_monitor_error", payload=self._monitor)
                     )
-                    await asyncio.sleep(5)
-                    self._monitor = {
-                        "status": "running",
-                        "last_error": self._monitor.get("last_error"),
-                        "last_event_at": self._monitor.get("last_event_at"),
-                    }
+                    self._record_monitor_heartbeat(
+                        status="reconnecting",
+                        attempt=attempts,
+                        last_successful_update_at=last_successful_update_at,
+                        error=exc,
+                        retry_seconds=retry_seconds,
+                        next_retry_at=next_retry_at,
+                    )
+                    await self.worker_sleep(retry_seconds)
         finally:
+            if next_event is not None and not next_event.done():
+                next_event.cancel()
+                try:
+                    await next_event
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
             if self._monitor_task is asyncio.current_task():
                 self._monitor_task = None
+
+    async def _reconcile_orders_read_only(self, settings: Settings) -> None:
+        cycle = self._cycle(settings)
+        reconcile = getattr(cycle, "reconcile_orders", None)
+        if callable(reconcile):
+            await reconcile(OrderLifecycle(self.journal))
+
+    def _record_monitor_heartbeat(
+        self,
+        *,
+        status: str,
+        attempt: int,
+        last_successful_update_at: str | None,
+        error: Exception | None = None,
+        retry_seconds: float | None = None,
+        next_retry_at: datetime | None = None,
+    ) -> None:
+        self.journal.append(
+            JournalEntry(
+                event="trade_update_monitor_heartbeat",
+                payload={
+                    "status": status,
+                    "interval_seconds": 30,
+                    "connection_attempt": attempt,
+                    "last_successful_update_at": last_successful_update_at,
+                    "last_error": f"{type(error).__name__}: {error}" if error else None,
+                    "error_type": type(error).__name__ if error else None,
+                    "retry_seconds": retry_seconds,
+                    "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                },
+            )
+        )
+
+    async def _run_position_guardian(self, settings: Settings) -> None:
+        cycle = self._cycle(settings)
+        try:
+            while True:
+                if self._is_running(self._scheduler_task):
+                    self._record_guardian_heartbeat(
+                        {"status": "delegated_to_scheduler", "managed": []}
+                    )
+                else:
+                    try:
+                        outcome = await cycle.manage_open_spreads()
+                    except (HTTPError, OSError, RuntimeError, TimeoutError) as exc:
+                        outcome = {
+                            "status": "management_error",
+                            "error_type": type(exc).__name__,
+                            "reason": str(exc) or type(exc).__name__,
+                            "managed": [],
+                        }
+                    self.journal.append(
+                        JournalEntry(event="position_management_cycle", payload=outcome)
+                    )
+                    self._record_guardian_heartbeat(outcome)
+                await self.worker_sleep(60)
+        finally:
+            if self._guardian_task is asyncio.current_task():
+                self._guardian_task = None
+
+    def _record_guardian_heartbeat(self, outcome: dict[str, Any]) -> None:
+        now = datetime.now(UTC)
+        outcome_status = str(outcome.get("status") or "unknown")
+        is_error = outcome_status == "management_error"
+        self.journal.append(
+            JournalEntry(
+                timestamp=now,
+                event="position_guardian_heartbeat",
+                payload={
+                    "status": outcome_status
+                    if outcome_status == "delegated_to_scheduler"
+                    else "error"
+                    if is_error
+                    else "waiting_market"
+                    if outcome_status == "market_closed"
+                    else "running",
+                    "interval_seconds": 60,
+                    "last_successful_update_at": None if is_error else now.isoformat(),
+                    "last_error": outcome.get("reason") if is_error else None,
+                    "error_type": outcome.get("error_type") if is_error else None,
+                    "managed_position_count": len(outcome.get("managed") or []),
+                    "market_open": False
+                    if outcome_status == "market_closed"
+                    else None
+                    if is_error or outcome_status == "delegated_to_scheduler"
+                    else True,
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                },
+            )
+        )
+
+    async def _stop_position_guardian(self) -> None:
+        task = self._guardian_task
+        if task is None:
+            return
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._guardian_task = None
+        self.journal.append(
+            JournalEntry(
+                event="position_guardian_heartbeat",
+                payload={
+                    "status": "stopped",
+                    "interval_seconds": 60,
+                    "session_id": self._session_id,
+                    "process_id": self._process_id,
+                },
+            )
+        )
 
     async def _stop_trade_update_monitor(self) -> None:
         task = self._monitor_task
@@ -376,6 +576,11 @@ class DashboardAgentController:
                 "last_error": self._monitor.get("last_error"),
                 "last_event_at": self._monitor.get("last_event_at"),
             }
+            self._record_monitor_heartbeat(
+                status="stopped",
+                attempt=0,
+                last_successful_update_at=self._monitor.get("last_event_at"),
+            )
 
     async def _stop_simulation(self) -> None:
         if self._simulation_task is None or self._simulation_task.done():

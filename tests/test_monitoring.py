@@ -202,7 +202,14 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
     )
 
     async def account_state():
-        return {}, {"is_open": True}, []
+        return (
+            {},
+            {"is_open": True},
+            [
+                {"symbol": entry.legs[0].symbol, "qty": "1"},
+                {"symbol": entry.legs[1].symbol, "qty": "-1"},
+            ],
+        )
 
     async def orders():
         return [
@@ -218,7 +225,7 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
         timestamp = datetime.now(UTC).isoformat()
         return {
             entry.legs[0].symbol: {"latestQuote": {"bp": 2.6, "ap": 2.7, "t": timestamp}},
-            entry.legs[1].symbol: {"latestQuote": {"bp": 0.4, "ap": 0.5, "t": timestamp}},
+            entry.legs[1].symbol: {"latestQuote": {"bp": 0.47, "ap": 0.5, "t": timestamp}},
         }
 
     cycle._account_state = account_state
@@ -234,3 +241,175 @@ async def test_lifecycle_manager_only_closes_a_filled_tracked_spread_in_dry_run(
     assert marks[0]["payload"]["guardian_reason"] == "take_profit"
     assert marks[0]["payload"]["take_profit_exit_credit"] == 1.95
     assert marks[0]["payload"]["stop_loss_exit_credit"] == 0.845
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_manager_recovers_filled_spread_from_journal_after_restart(tmp_path):
+    now = datetime(2026, 9, 2, 15, 0, tzinfo=UTC)
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test", filled_at=now)
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: now,
+    )
+
+    async def account_state():
+        return (
+            {},
+            {"is_open": True},
+            [
+                {"symbol": entry.legs[0].symbol, "qty": "1"},
+                {"symbol": entry.legs[1].symbol, "qty": "-1"},
+            ],
+        )
+
+    async def orders():
+        return []
+
+    async def snapshots(_underlying, *, symbols):
+        assert symbols == [leg.symbol for leg in entry.legs]
+        return {
+            entry.legs[0].symbol: {"latestQuote": {"bp": 1.55, "ap": 1.6, "t": now.isoformat()}},
+            entry.legs[1].symbol: {"latestQuote": {"bp": 0.28, "ap": 0.3, "t": now.isoformat()}},
+        }
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = orders
+    cycle.alpaca.option_snapshots = snapshots
+    managed = await cycle.manage_open_spreads()
+
+    assert managed["managed"] == [
+        {
+            "client_order_id": entry.client_order_id,
+            "status": "hold",
+            "reason": "no_exit_trigger",
+        }
+    ]
+    assert journal.latest()[0]["event"] == "position_mark"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_manager_rejects_partial_or_mismatched_provider_legs(tmp_path):
+    now = datetime(2026, 9, 2, 15, 0, tzinfo=UTC)
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test", filled_at=now)
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: now,
+    )
+
+    async def account_state():
+        return {}, {"is_open": True}, [{"symbol": entry.legs[0].symbol, "qty": "0.5"}]
+
+    async def orders():
+        return []
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = orders
+    managed = await cycle.manage_open_spreads()
+
+    assert managed["managed"][0]["status"] == "position_mismatch"
+    assert len(managed["managed"][0]["position_evidence"]["mismatches"]) == 2
+    assert journal.latest()[0]["event"] == "position_guardian_rejected"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_manager_never_duplicates_an_ambiguous_exit_attempt(tmp_path):
+    now = datetime(2026, 9, 2, 15, 0, tzinfo=UTC)
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test", filled_at=now)
+    journal.append(
+        JournalEntry(
+            event="exit_submission_intent",
+            plan=entry.closing_plan(executable_credit=1.2),
+            gate=GateResult(approved=True, reasons=[]),
+        )
+    )
+    cycle = AutonomousCycle(
+        settings,
+        PaperExecutionAgent(settings, journal, NoCallMCP()),
+        now=lambda: now,
+    )
+
+    async def account_state():
+        return (
+            {},
+            {"is_open": True},
+            [
+                {"symbol": entry.legs[0].symbol, "qty": "1"},
+                {"symbol": entry.legs[1].symbol, "qty": "-1"},
+            ],
+        )
+
+    async def orders():
+        return []
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = orders
+    assert await cycle.manage_open_spreads() == {"status": "ok", "managed": []}
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_manager_does_nothing_when_market_is_closed(tmp_path):
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test")
+    cycle = AutonomousCycle(settings, PaperExecutionAgent(settings, journal, NoCallMCP()))
+
+    async def account_state():
+        return {}, {"is_open": False}, []
+
+    async def forbidden_orders():
+        raise AssertionError("closed-market guardian must not inspect or mutate orders")
+
+    cycle._account_state = account_state
+    cycle.alpaca.orders = forbidden_orders
+    assert await cycle.manage_open_spreads() == {"status": "market_closed", "managed": []}
+
+
+@pytest.mark.asyncio
+async def test_rest_reconnect_recovers_successful_exit_and_realized_pnl(tmp_path):
+    settings = Settings(dry_run=True)
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    entry = plan()
+    journal.record_entry_fill(entry, filled_price=1.3, source="test", fees_usd=0)
+    exit_plan = entry.closing_plan(executable_credit=1.8)
+    journal.append(
+        JournalEntry(
+            event="exit_submission_intent",
+            plan=exit_plan,
+            gate=GateResult(approved=True, reasons=[]),
+            payload={"reason": "take_profit"},
+        )
+    )
+    cycle = AutonomousCycle(settings, PaperExecutionAgent(settings, journal, NoCallMCP()))
+
+    async def orders():
+        return [
+            {
+                "id": "paper-exit-rest-1",
+                "client_order_id": exit_plan.client_order_id,
+                "status": "filled",
+                "filled_qty": "1",
+                "qty": "1",
+                "filled_avg_price": "1.8",
+                "commission": "0",
+            }
+        ]
+
+    cycle.alpaca.orders = orders
+    await cycle.reconcile_orders(OrderLifecycle(journal))
+
+    evidence = journal.complete_trade_evidence()
+    assert len(evidence) == 1
+    assert evidence[0]["provider_exit_order_id"] == "paper-exit-rest-1"
+    assert evidence[0]["realized_pnl_after_fees"] == 50.0

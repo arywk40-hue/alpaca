@@ -25,7 +25,7 @@ from .models import (
     TradePlan,
     TradeThesisExplanation,
 )
-from .monitoring import OrderLifecycle, PositionGuardian
+from .monitoring import OrderLifecycle, PaperTradeUpdateMonitor, PositionGuardian
 from .risk import DeterministicRiskGate
 from .scanner import OpportunityScanner, ScanResult
 from .strategy.spread_builder import position_size
@@ -83,7 +83,13 @@ class AutonomousCycle:
 
     async def reconcile_orders(self, lifecycle: OrderLifecycle) -> dict[str, Any]:
         """Read current paper-order state after a stream reconnect; never submits an order."""
-        states = lifecycle.reconcile(await self.alpaca.orders())
+        orders = await self.alpaca.orders()
+        states = lifecycle.reconcile(orders)
+        fill_reconciler = PaperTradeUpdateMonitor(
+            self.settings, self.executor.journal, lifecycle=lifecycle
+        )
+        for order in orders:
+            fill_reconciler.reconcile_fill_outcomes(order)
         return {
             "mode": "read_only_reconciliation",
             "orders_seen": len(states),
@@ -99,29 +105,71 @@ class AutonomousCycle:
 
     async def manage_open_spreads(self) -> dict[str, Any]:
         """Evaluate filled tracked spreads and submit only deterministic close orders."""
-        _, clock, _ = await self._account_state()
+        _, clock, positions = await self._account_state()
         if not bool(clock.get("is_open")):
             return {"status": "market_closed", "managed": []}
         guardian = PositionGuardian()
         managed: list[dict[str, Any]] = []
-        for order in await self.alpaca.orders():
-            if str(order.get("status")) != "filled":
-                continue
-            client_order_id = str(order.get("client_order_id") or "")
+        orders = await self.alpaca.orders()
+        filled_orders = {
+            str(order.get("client_order_id")): order
+            for order in orders
+            if str(order.get("status")) == "filled" and order.get("client_order_id")
+        }
+        tracked = {plan.client_order_id: plan for plan in self.executor.journal.open_entry_plans()}
+        for client_order_id in filled_orders:
+            plan = self.executor.journal.plan_for_client_order_id(client_order_id)
+            if plan is not None and not plan.is_closing:
+                tracked.setdefault(client_order_id, plan)
+        for client_order_id, plan in tracked.items():
             if not client_order_id or self.executor.journal.has_exit_for(client_order_id):
                 continue
-            plan = self.executor.journal.plan_for_client_order_id(client_order_id)
-            if plan is None or plan.is_closing or plan.strategy != "debit_spread":
+            if plan.is_closing or plan.strategy != "debit_spread":
                 continue
+            position_ok, position_evidence = self._provider_position_review(plan, positions)
+            if not position_ok:
+                self.executor.journal.append(
+                    JournalEntry(
+                        event="position_guardian_rejected",
+                        plan=plan,
+                        payload={
+                            "reason": "provider positions do not match the tracked spread",
+                            **position_evidence,
+                        },
+                    )
+                )
+                managed.append(
+                    {
+                        "client_order_id": client_order_id,
+                        "status": "position_mismatch",
+                        "reason": "provider positions do not match the tracked spread",
+                        "position_evidence": position_evidence,
+                    }
+                )
+                continue
+            order = filled_orders.get(client_order_id) or {}
             entry_debit = self._recorded_entry_debit(plan, order)
             held_symbols = [leg.symbol for leg in plan.legs]
             snapshots = await self.alpaca.option_snapshots(plan.underlying, symbols=held_symbols)
-            credit = self._executable_exit_credit(plan, snapshots)
+            credit, quote_evidence = self._executable_exit_review(plan, snapshots)
             if credit is None:
-                managed.append({"client_order_id": client_order_id, "status": "no_quote"})
+                self.executor.journal.append(
+                    JournalEntry(
+                        event="position_guardian_rejected",
+                        plan=plan,
+                        payload={"reason": quote_evidence["reason"], **quote_evidence},
+                    )
+                )
+                managed.append(
+                    {
+                        "client_order_id": client_order_id,
+                        "status": "no_quote",
+                        "reason": quote_evidence["reason"],
+                    }
+                )
                 continue
             unrealized_pnl = round((credit - entry_debit) * 100 * plan.qty, 2)
-            entered_at = self._order_timestamp(order.get("filled_at"))
+            entered_at = self._recorded_entry_timestamp(plan, order)
             expiration = datetime.fromisoformat(plan.candidate.expiration).replace(tzinfo=UTC)
             decision = guardian.evaluate(
                 entry_debit=entry_debit,
@@ -141,6 +189,8 @@ class AutonomousCycle:
                         "spread_return_pct": round(decision.spread_return_pct, 6),
                         "guardian_action": decision.action,
                         "guardian_reason": decision.reason,
+                        "position_evidence": position_evidence,
+                        "quote_evidence": quote_evidence,
                         "take_profit_exit_credit": round(
                             entry_debit * (1 + guardian.take_profit_return), 4
                         ),
@@ -196,6 +246,47 @@ class AutonomousCycle:
             fees_usd=self._provider_fees(order),
         )
         return filled_price
+
+    def _recorded_entry_timestamp(self, plan: TradePlan, order: dict) -> datetime:
+        if order.get("filled_at"):
+            return self._order_timestamp(order["filled_at"])
+        entry_fill = self.executor.journal.entry_fill_for(plan.client_order_id)
+        if entry_fill and entry_fill.get("timestamp"):
+            return self._order_timestamp(entry_fill["timestamp"])
+        return self._now().astimezone(UTC)
+
+    @staticmethod
+    def _provider_position_review(
+        plan: TradePlan, positions: list[dict[str, Any]]
+    ) -> tuple[bool, dict[str, Any]]:
+        """Require the exact two provider legs before any exit evaluation."""
+        actual: dict[str, float] = {}
+        for position in positions:
+            symbol = str(position.get("symbol") or "")
+            if not symbol:
+                continue
+            try:
+                actual[symbol] = float(position.get("qty") or 0)
+            except (TypeError, ValueError):
+                actual[symbol] = 0.0
+        expected = {
+            leg.symbol: float(plan.qty * leg.ratio_qty) * (1 if leg.side is Side.BUY else -1)
+            for leg in plan.legs
+        }
+        mismatches = [
+            {
+                "symbol": symbol,
+                "expected_qty": expected_qty,
+                "actual_qty": actual.get(symbol, 0.0),
+            }
+            for symbol, expected_qty in expected.items()
+            if actual.get(symbol, 0.0) != expected_qty
+        ]
+        return not mismatches, {
+            "expected_legs": expected,
+            "actual_tracked_legs": {symbol: actual.get(symbol, 0.0) for symbol in expected},
+            "mismatches": mismatches,
+        }
 
     @staticmethod
     def _provider_fees(order: dict[str, Any]) -> float | None:
@@ -809,7 +900,9 @@ class AutonomousCycle:
         }
         return reasons, evidence
 
-    def _executable_exit_credit(self, plan: TradePlan, snapshots: dict[str, dict]) -> float | None:
+    def _executable_exit_review(
+        self, plan: TradePlan, snapshots: dict[str, dict]
+    ) -> tuple[float | None, dict[str, Any]]:
         quotes: dict[str, dict] = {}
         for leg in plan.legs:
             quote = self._snapshot_quote(
@@ -818,14 +911,43 @@ class AutonomousCycle:
                 max_age_seconds=self.settings.max_execution_quote_age_seconds,
             )
             if not quote:
-                return None
+                return None, {
+                    "reason": f"fresh quote unavailable for {leg.symbol}",
+                    "maximum_quote_age_seconds": self.settings.max_execution_quote_age_seconds,
+                    "quotes": quotes,
+                }
+            midpoint = (float(quote["bid"]) + float(quote["ask"])) / 2
+            spread_pct = (
+                (float(quote["ask"]) - float(quote["bid"])) / midpoint if midpoint > 0 else 1.0
+            )
+            quote["spread_pct"] = round(spread_pct, 6)
             quotes[leg.symbol] = quote
+            if spread_pct > self.settings.max_bid_ask_spread_pct:
+                return None, {
+                    "reason": f"exit quote liquidity failed for {leg.symbol}",
+                    "maximum_bid_ask_spread_pct": self.settings.max_bid_ask_spread_pct,
+                    "quotes": quotes,
+                }
         long_leg = next(leg for leg in plan.legs if leg.side is Side.BUY)
         short_leg = next(leg for leg in plan.legs if leg.side is Side.SELL)
         long_bid = float(quotes[long_leg.symbol]["bid"])
         short_ask = float(quotes[short_leg.symbol]["ask"])
         credit = round(long_bid - short_ask, 4)
-        return credit if credit > 0 else None
+        if credit <= 0:
+            return None, {
+                "reason": "fresh quotes do not form a positive executable exit credit",
+                "quotes": quotes,
+            }
+        return credit, {
+            "reason": "fresh and liquid exact-leg exit quotes passed",
+            "maximum_quote_age_seconds": self.settings.max_execution_quote_age_seconds,
+            "maximum_bid_ask_spread_pct": self.settings.max_bid_ask_spread_pct,
+            "quotes": quotes,
+        }
+
+    def _executable_exit_credit(self, plan: TradePlan, snapshots: dict[str, dict]) -> float | None:
+        """Backward-compatible value-only wrapper used by focused tests."""
+        return self._executable_exit_review(plan, snapshots)[0]
 
     @staticmethod
     def _order_timestamp(value: object) -> datetime:

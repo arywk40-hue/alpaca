@@ -208,6 +208,12 @@ class PaperTradeUpdateMonitor:
                 self._record_exit_outcome(event)
                 yield event
 
+    def reconcile_fill_outcomes(self, order: dict[str, Any]) -> None:
+        """Recover entry/exit fill evidence from a read-only REST snapshot."""
+        event = {"event": str(order.get("status") or "unknown"), "order": order}
+        self._record_entry_fill(event)
+        self._record_exit_outcome(event)
+
     def _record_entry_fill(self, event: dict[str, Any]) -> None:
         order = event.get("order", event)
         if (
@@ -280,42 +286,45 @@ class PaperTradeUpdateMonitor:
         exit_reason = (
             self.journal.exit_reason_for(exit_plan.client_order_id) or "unknown_exit_reason"
         )
-        if self.journal.record_shadow_outcome(
+        if self.journal.has_lifecycle_event("exit_fill_reconciled", exit_plan.client_order_id):
+            return
+        shadow_recorded = self.journal.record_shadow_outcome(
             entry_plan.client_order_id,
             selected_net_pnl=gross_realized_pnl,
             shadow_net_pnl=0.0,
             close_reason=exit_reason,
-        ):
-            self.journal.append(
-                JournalEntry(
-                    timestamp=OrderLifecycle._provider_timestamp(order.get("filled_at")),
-                    event="exit_fill_reconciled",
-                    plan=exit_plan,
-                    payload={
-                        "filled_price": exit_credit,
-                        "entry_debit": entry_debit,
-                        "debit_paid_usd": round(entry_debit * multiplier * entry_plan.qty, 2),
-                        "credit_received_usd": round(exit_credit * multiplier * entry_plan.qty, 2),
-                        "contract_multiplier": multiplier,
-                        "quantity": entry_plan.qty,
-                        "reason": exit_reason,
-                        "provider_order_id": str(order.get("id"))
-                        if order.get("id") is not None
-                        else None,
-                        "entry_fees_usd": entry_fees,
-                        "exit_fees_usd": exit_fees,
-                        "total_fees_usd": total_fees,
-                        "fees_status": "reported_by_provider"
-                        if total_fees is not None
-                        else "not_reported_by_alpaca",
-                        "slippage_vs_limits_usd": total_slippage,
-                        "realized_pnl_before_fees": gross_realized_pnl,
-                        "realized_pnl_after_fees": realized_after_fees,
-                        "maximum_adverse_excursion_usd": maximum_adverse,
-                        "maximum_favorable_excursion_usd": maximum_favorable,
-                    },
-                )
+        )
+        self.journal.append(
+            JournalEntry(
+                timestamp=OrderLifecycle._provider_timestamp(order.get("filled_at")),
+                event="exit_fill_reconciled",
+                plan=exit_plan,
+                payload={
+                    "filled_price": exit_credit,
+                    "entry_debit": entry_debit,
+                    "debit_paid_usd": round(entry_debit * multiplier * entry_plan.qty, 2),
+                    "credit_received_usd": round(exit_credit * multiplier * entry_plan.qty, 2),
+                    "contract_multiplier": multiplier,
+                    "quantity": entry_plan.qty,
+                    "reason": exit_reason,
+                    "provider_order_id": str(order.get("id"))
+                    if order.get("id") is not None
+                    else None,
+                    "entry_fees_usd": entry_fees,
+                    "exit_fees_usd": exit_fees,
+                    "total_fees_usd": total_fees,
+                    "fees_status": "reported_by_provider"
+                    if total_fees is not None
+                    else "not_reported_by_alpaca",
+                    "slippage_vs_limits_usd": total_slippage,
+                    "realized_pnl_before_fees": gross_realized_pnl,
+                    "realized_pnl_after_fees": realized_after_fees,
+                    "maximum_adverse_excursion_usd": maximum_adverse,
+                    "maximum_favorable_excursion_usd": maximum_favorable,
+                },
             )
+        )
+        if shadow_recorded:
             self.journal.append(
                 JournalEntry(
                     event="shadow_outcome_recorded",

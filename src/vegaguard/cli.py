@@ -1,7 +1,7 @@
 import argparse
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from .execution import PaperExecutionAgent
 from .journal import DecisionJournal
 from .mcp_client import AlpacaMCPClient
 from .models import JournalEntry
-from .monitoring import PaperTradeUpdateMonitor
+from .monitoring import OrderLifecycle, PaperTradeUpdateMonitor
 from .preflight import PaperPreflight
 from .scheduler import MarketHoursScheduler
 from .service import AutonomousCycle
@@ -82,33 +82,123 @@ async def _monitor_trade_updates(
         raise RuntimeError("Missing ALPACA_API_KEY or ALPACA_SECRET_KEY in .env")
     if max_connection_attempts is not None and max_connection_attempts < 1:
         raise ValueError("max_connection_attempts must be at least one")
+    production_monitor = monitor_factory is None
     monitor_factory = monitor_factory or PaperTradeUpdateMonitor
     journal = journal or DecisionJournal()
+    cycle = None
+    if production_monitor:
+        executor = PaperExecutionAgent(settings, journal, AlpacaMCPClient(settings))
+        cycle = AutonomousCycle(settings, executor)
     attempts = 0
+    next_event: asyncio.Task[Any] | None = None
     while True:
         attempts += 1
         try:
+            if cycle is not None:
+                journal.append(
+                    JournalEntry(
+                        event="trade_update_monitor_heartbeat",
+                        payload={
+                            "status": "reconciling",
+                            "interval_seconds": 30,
+                            "connection_attempt": attempts,
+                        },
+                    )
+                )
+                await cycle.reconcile_orders(OrderLifecycle(journal))
             monitor = monitor_factory(settings, journal)
-            async for event in monitor.events():
+            journal.append(
+                JournalEntry(
+                    event="trade_update_monitor_heartbeat",
+                    payload={
+                        "status": "connected",
+                        "interval_seconds": 30,
+                        "connection_attempt": attempts,
+                    },
+                )
+            )
+            iterator = monitor.events().__aiter__()
+            next_event = asyncio.create_task(anext(iterator))
+            while True:
+                done, _ = await asyncio.wait({next_event}, timeout=30)
+                if not done:
+                    journal.append(
+                        JournalEntry(
+                            event="trade_update_monitor_heartbeat",
+                            payload={
+                                "status": "connected_idle",
+                                "interval_seconds": 30,
+                                "connection_attempt": attempts,
+                            },
+                        )
+                    )
+                    continue
+                try:
+                    event = next_event.result()
+                except StopAsyncIteration as exc:
+                    raise RuntimeError("paper trade-update stream ended") from exc
                 print(json.dumps(event, indent=2))
-            raise RuntimeError("paper trade-update stream ended")
+                journal.append(
+                    JournalEntry(
+                        event="trade_update_monitor_heartbeat",
+                        payload={
+                            "status": "connected",
+                            "interval_seconds": 30,
+                            "connection_attempt": attempts,
+                            "last_successful_update_at": datetime.now(UTC).isoformat(),
+                        },
+                    )
+                )
+                next_event = asyncio.create_task(anext(iterator))
         except asyncio.CancelledError:
+            if next_event is not None and not next_event.done():
+                next_event.cancel()
+                try:
+                    await next_event
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
             raise
         except (OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
+            if next_event is not None and not next_event.done():
+                next_event.cancel()
+                try:
+                    await next_event
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
+            next_event = None
+            bounded_retry = min(retry_seconds * (2 ** (attempts - 1)), 60.0)
+            next_retry_at = datetime.now(UTC) + timedelta(seconds=bounded_retry)
+            error_detail = f"{type(exc).__name__}: {exc}"
             journal.append(
                 JournalEntry(
                     event="trade_update_monitor_error",
                     payload={
                         "status": "reconnecting",
                         "error_type": type(exc).__name__,
+                        "last_error": error_detail,
                         "connection_attempt": attempts,
-                        "retry_seconds": retry_seconds,
+                        "retry_seconds": bounded_retry,
+                        "next_retry_at": next_retry_at.isoformat(),
+                    },
+                )
+            )
+            journal.append(
+                JournalEntry(
+                    event="trade_update_monitor_heartbeat",
+                    payload={
+                        "status": "reconnecting",
+                        "interval_seconds": 30,
+                        "error_type": type(exc).__name__,
+                        "last_error": error_detail,
+                        "connection_attempt": attempts,
+                        "retry_seconds": bounded_retry,
+                        "next_retry_at": next_retry_at.isoformat(),
                     },
                 )
             )
             if max_connection_attempts is not None and attempts >= max_connection_attempts:
                 return
-            await asyncio.sleep(retry_seconds)
+            await asyncio.sleep(bounded_retry)
 
 
 async def _lifecycle_evidence() -> None:

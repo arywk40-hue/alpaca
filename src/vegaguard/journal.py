@@ -106,6 +106,7 @@ class DecisionJournal:
         if status in {"running", "waiting"} and age_seconds > interval_seconds * 2 + 60:
             status = "stale"
         latest_entries = self.latest(1)
+        scheduled_next_run_at = payload.get("next_run_at")
         return {
             "status": status,
             "last_heartbeat_at": timestamp.isoformat(),
@@ -113,7 +114,11 @@ class DecisionJournal:
             "interval_seconds": interval_seconds,
             "cycle_number": payload.get("cycle_number"),
             "last_cycle_status": payload.get("last_cycle_status"),
-            "next_run_at": payload.get("next_run_at"),
+            # A persisted prediction is not a future schedule after its owner is
+            # stale/stopped. Preserve it separately for audit without presenting
+            # it as evidence that a process is still alive.
+            "next_run_at": scheduled_next_run_at if status in {"running", "waiting"} else None,
+            "last_scheduled_next_run_at": scheduled_next_run_at,
             "last_error": payload.get("last_error"),
             "session_id": payload.get("session_id"),
             "process_id": payload.get("process_id"),
@@ -124,6 +129,66 @@ class DecisionJournal:
             "last_journal_timestamp": latest_entries[0].get("timestamp")
             if latest_entries
             else None,
+        }
+
+    def monitor_status(self, *, now: datetime | None = None) -> dict:
+        return self._worker_status(
+            "trade_update_monitor_heartbeat",
+            active_statuses={"connecting", "connected", "connected_idle", "reconciling"},
+            default_interval_seconds=30,
+            now=now,
+        )
+
+    def guardian_status(self, *, now: datetime | None = None) -> dict:
+        return self._worker_status(
+            "position_guardian_heartbeat",
+            active_statuses={"running", "waiting_market", "delegated_to_scheduler"},
+            default_interval_seconds=60,
+            now=now,
+        )
+
+    def _worker_status(
+        self,
+        event: str,
+        *,
+        active_statuses: set[str],
+        default_interval_seconds: int,
+        now: datetime | None,
+    ) -> dict:
+        heartbeat = self.ledger.latest_event(event)
+        if heartbeat is None:
+            return {
+                "status": "never_started",
+                "last_heartbeat_at": None,
+                "last_successful_update_at": None,
+                "last_error": None,
+            }
+        timestamp = datetime.fromisoformat(str(heartbeat["timestamp"]))
+        timestamp = (
+            timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
+        )
+        payload = heartbeat.get("payload") or {}
+        interval_seconds = int(payload.get("interval_seconds") or default_interval_seconds)
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        age_seconds = max(0.0, (current - timestamp).total_seconds())
+        status = str(payload.get("status") or "unknown")
+        if status in active_statuses and age_seconds > interval_seconds * 2 + 30:
+            status = "stale"
+        return {
+            "status": status,
+            "last_heartbeat_at": timestamp.isoformat(),
+            "age_seconds": round(age_seconds, 1),
+            "interval_seconds": interval_seconds,
+            "last_successful_update_at": payload.get("last_successful_update_at"),
+            "last_error": payload.get("last_error"),
+            "error_type": payload.get("error_type"),
+            "connection_attempt": payload.get("connection_attempt"),
+            "retry_seconds": payload.get("retry_seconds"),
+            "next_retry_at": payload.get("next_retry_at"),
+            "managed_position_count": payload.get("managed_position_count"),
+            "market_open": payload.get("market_open"),
+            "session_id": payload.get("session_id"),
+            "process_id": payload.get("process_id"),
         }
 
     def has_client_order_id(self, client_order_id: str) -> bool:
@@ -366,15 +431,56 @@ class DecisionJournal:
                 continue
         return None
 
+    def open_entry_plans(self) -> list[TradePlan]:
+        """Recover filled entries without a reconciled provider exit after restart."""
+        if not self.path.exists():
+            return []
+        fills: dict[str, TradePlan] = {}
+        closed: set[str] = set()
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+                raw_plan = entry.get("plan") or {}
+            except json.JSONDecodeError:
+                continue
+            if entry.get("event") == "position_entry_filled" and raw_plan.get("client_order_id"):
+                try:
+                    plan = TradePlan.model_validate(raw_plan)
+                except ValueError:
+                    continue
+                if not plan.is_closing:
+                    fills[plan.client_order_id] = plan
+            if entry.get("event") == "exit_fill_reconciled" and raw_plan.get(
+                "parent_client_order_id"
+            ):
+                closed.add(str(raw_plan["parent_client_order_id"]))
+        return [plan for client_order_id, plan in fills.items() if client_order_id not in closed]
+
     def has_exit_for(self, parent_client_order_id: str) -> bool:
+        """Return true only after a real or ambiguous provider submission attempt.
+
+        Quote evaluation and dry-run close plans must not permanently disable a
+        later provider-backed exit. A submission intent is intentionally sticky:
+        VegaGuard performs zero automatic retries after an ambiguous boundary.
+        """
         if not self.path.exists():
             return False
         for line in self.path.read_text(encoding="utf-8").splitlines():
             try:
-                plan = json.loads(line).get("plan") or {}
+                entry = json.loads(line)
+                plan = entry.get("plan") or {}
             except json.JSONDecodeError:
                 continue
-            if plan.get("parent_client_order_id") == parent_client_order_id:
+            if (
+                entry.get("event")
+                in {
+                    "exit_submission_intent",
+                    "exit_submission_receipt",
+                    "exit_order_acknowledged",
+                    "exit_fill_reconciled",
+                }
+                and plan.get("parent_client_order_id") == parent_client_order_id
+            ):
                 return True
         return False
 
@@ -429,6 +535,10 @@ class DecisionJournal:
             ):
                 return entry
         return None
+
+    def has_lifecycle_event(self, event: str, client_order_id: str) -> bool:
+        """Expose durable lifecycle idempotency without leaking ledger internals."""
+        return self._has_event(event, client_order_id)
 
     def entry_debit_for(self, client_order_id: str) -> float | None:
         """Return the recorded actual entry debit, never an inferred market mark."""
@@ -506,7 +616,7 @@ class DecisionJournal:
         for client_order_id, entry_fill in entry_fills.items():
             exit_fill = exits.get(client_order_id)
             outcome = outcomes.get(client_order_id)
-            if not exit_fill or not outcome:
+            if not exit_fill:
                 continue
             plan = entry_fill["plan"]
             evidence.append(
@@ -544,7 +654,9 @@ class DecisionJournal:
                     "realized_pnl_after_fees": exit_fill["payload"].get("realized_pnl_after_fees"),
                     # Backward-compatible alias: fill-to-fill realized P&L before
                     # unreported fees, never hypothetical quote P&L.
-                    "realized_pnl": outcome["payload"]["selected_net_pnl"],
+                    "realized_pnl": exit_fill["payload"].get("realized_pnl_before_fees")
+                    if outcome is None
+                    else outcome["payload"]["selected_net_pnl"],
                 }
             )
         return evidence

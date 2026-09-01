@@ -248,6 +248,37 @@ def test_dashboard_reports_scheduler_never_started_and_stale_states(tmp_path):
     assert status["status"] == "stale"
     assert status["cycle_number"] == 2
     assert "Scheduler heartbeat" in dashboard_html()
+
+
+def test_dashboard_distinguishes_stale_scheduler_from_active_guardian(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    now = datetime(2026, 9, 1, 15, 0, tzinfo=UTC)
+    journal.append(
+        JournalEntry(
+            timestamp=now - timedelta(minutes=10),
+            event="scheduler_heartbeat",
+            payload={
+                "status": "waiting",
+                "interval_seconds": 60,
+                "next_run_at": (now - timedelta(minutes=9)).isoformat(),
+            },
+        )
+    )
+    journal.append(
+        JournalEntry(
+            timestamp=now,
+            event="position_guardian_heartbeat",
+            payload={"status": "running", "interval_seconds": 60},
+        )
+    )
+
+    scheduler = journal.scheduler_status(now=now)
+    guardian = journal.guardian_status(now=now)
+    assert scheduler["status"] == "stale"
+    assert scheduler["next_run_at"] is None
+    assert scheduler["last_scheduled_next_run_at"]
+    assert guardian["status"] == "running"
+    assert "Position guardian" in dashboard_html()
     assert "hypothetical evidence" in dashboard_html()
     assert "Start Shadow Agent" in dashboard_html()
     assert "Start Simulation Replay" in dashboard_html()

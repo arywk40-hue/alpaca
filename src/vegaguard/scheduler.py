@@ -80,6 +80,7 @@ class MarketHoursScheduler:
                 manager = getattr(self.cycle, "manage_open_spreads", None)
                 if callable(manager):
                     lifecycle = await manager()
+                    self._record_guardian_heartbeat(lifecycle)
                 entry_outcome = await self.cycle.run_once()
             except (HTTPError, OSError, RuntimeError, TimeoutError) as exc:
                 # Keep paper monitoring alive after a transient data/runtime failure.
@@ -164,9 +165,40 @@ class MarketHoursScheduler:
                     "reason": str(exc) or type(exc).__name__,
                 }
             self.journal.append(JournalEntry(event="position_management_cycle", payload=outcome))
+            self._record_guardian_heartbeat(outcome)
             if outcome.get("status") == "market_closed":
                 await self.sleep(self.interval_seconds - elapsed)
                 return
+
+    def _record_guardian_heartbeat(self, outcome: dict[str, Any]) -> None:
+        now = self.now().astimezone(UTC)
+        status = str(outcome.get("status") or "unknown")
+        is_error = status == "management_error"
+        self.journal.append(
+            JournalEntry(
+                timestamp=now,
+                event="position_guardian_heartbeat",
+                payload={
+                    "status": "error"
+                    if is_error
+                    else "waiting_market"
+                    if status == "market_closed"
+                    else "running",
+                    "interval_seconds": self.management_interval_seconds,
+                    "last_successful_update_at": None if is_error else now.isoformat(),
+                    "last_error": outcome.get("reason") if is_error else None,
+                    "error_type": outcome.get("error_type") if is_error else None,
+                    "managed_position_count": len(outcome.get("managed") or []),
+                    "market_open": False
+                    if status == "market_closed"
+                    else None
+                    if is_error
+                    else True,
+                    "session_id": self.session_id,
+                    "process_id": self.process_id,
+                },
+            )
+        )
 
     @staticmethod
     def _entry_outcome(outcome: dict[str, Any]) -> dict[str, Any]:

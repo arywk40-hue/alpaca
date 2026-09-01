@@ -5,6 +5,7 @@ from logging import INFO
 
 import pytest
 from fastapi.testclient import TestClient
+from test_execution import plan as trade_plan
 
 from vegaguard.api import create_app
 from vegaguard.config import Settings
@@ -93,12 +94,93 @@ async def test_dashboard_worker_owns_the_paper_trade_update_monitor(tmp_path):
         monitor_factory=lambda *_args: BlockingTradeUpdateMonitor(),
     )
     await controller.start_shadow(interval_seconds=60)
-    await asyncio.sleep(0)
-    assert controller.status()["trade_update_monitor"]["status"] == "running"
+    for _ in range(20):
+        if controller.status()["trade_update_monitor"]["last_event_at"]:
+            break
+        await asyncio.sleep(0)
+    assert controller.status()["trade_update_monitor"]["status"] in {"running", "connected"}
     assert controller.status()["trade_update_monitor"]["last_event_at"]
 
     await controller.stop_shadow()
+    assert controller.status()["trade_update_monitor"]["status"] == "connected"
+    await controller.aclose()
     assert controller.status()["trade_update_monitor"]["status"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_guardian_resumes_existing_fill_without_starting_scheduler(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    journal.record_entry_fill(trade_plan(), filled_price=1.3, source="test")
+    sleep_started = asyncio.Event()
+
+    class ExistingPositionCycle(ClosedCycle):
+        async def manage_open_spreads(self):
+            return {"status": "market_closed", "managed": []}
+
+    async def blocked_sleep(_seconds):
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    controller = DashboardAgentController(
+        journal=journal,
+        settings_factory=Settings,
+        cycle_factory=lambda *_args: ExistingPositionCycle(),
+        enable_trade_update_monitor=False,
+        worker_sleep=blocked_sleep,
+    )
+    await controller.start_lifecycle_workers()
+    await sleep_started.wait()
+
+    status = controller.status()
+    assert status["controller_running"] is False
+    assert status["position_guardian_process_running"] is True
+    assert status["position_guardian"]["status"] == "waiting_market"
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_trade_monitor_reconnects_with_bounded_backoff_and_persists_health(tmp_path):
+    settings = Settings(alpaca_api_key="paper-key", alpaca_secret_key="paper-secret")
+    attempts = 0
+    sleeps: list[float] = []
+    second_connected = asyncio.Event()
+
+    class ReconnectingMonitor:
+        async def events(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary disconnect detail")
+            yield {"event": "new"}
+            second_connected.set()
+            await asyncio.Event().wait()
+
+    async def retry_sleep(seconds):
+        sleeps.append(seconds)
+
+    controller = DashboardAgentController(
+        journal=DecisionJournal(tmp_path / "journal.jsonl"),
+        settings_factory=lambda: settings,
+        cycle_factory=lambda *_args: ClosedCycle(),
+        monitor_factory=lambda *_args: ReconnectingMonitor(),
+        worker_sleep=retry_sleep,
+    )
+    await controller.start_lifecycle_workers()
+    await second_connected.wait()
+    await asyncio.sleep(0)
+
+    status = controller.status()["trade_update_monitor"]
+    assert attempts == 2
+    assert sleeps == [5]
+    assert status["status"] == "connected"
+    assert status["last_successful_update_at"]
+    error_events = [
+        event
+        for event in controller.journal.latest()
+        if event["event"] == "trade_update_monitor_error"
+    ]
+    assert "temporary disconnect detail" in error_events[0]["payload"]["last_error"]
+    await controller.aclose()
 
 
 @pytest.mark.asyncio

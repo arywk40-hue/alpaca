@@ -47,6 +47,7 @@ def create_app(*, controller: DashboardAgentController | None = None) -> FastAPI
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.controller = controller or DashboardAgentController()
         try:
+            await application.state.controller.start_lifecycle_workers()
             yield
         finally:
             await application.state.controller.aclose()
