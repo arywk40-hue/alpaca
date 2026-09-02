@@ -1,90 +1,105 @@
 # VegaGuard — 10-slide demo deck
 
-This is the presentation-ready slide specification for the hackathon demo. It is
-grounded in the checked-in replay artifacts and deliberately distinguishes
-simulation, shadow evidence, approved plans, and provider-backed paper events.
+Keep the slides visual. The short text below is what belongs on screen; the narration carries the detail.
 
-## Slide 1 — Evidence before execution
+## 1 — Evidence before execution
 
-**On screen:** VegaGuard — Auditable Autonomous Options Risk Committee
+**VegaGuard**
 
-**Subtitle:** Paper-only, defined-risk ETF options with a visible authority boundary.
+Auditable, paper-only ETF options
 
-**Visual:** Shield over a small options decision pipeline; leave room for the title.
+`1 completed Alpaca paper spread · +$2 gross before fees`
 
-## Slide 2 — The problem is not finding a trade
+**Visual:** Product name beside the dashboard's paper-lifecycle strip.
 
-**On screen:** A plausible signal is not an executable decision.
+## 2 — The risky part starts after the signal
 
-Show the failure modes: stale quotes, ambiguous legs, hidden risk, and an
-LLM that can silently change the order. The demo goal is an auditable decision,
-including a safe abstention.
+**A signal is not an order.**
 
-## Slide 3 — A deterministic committee owns authority
+Stale quote · changed legs · hidden loss · duplicate order · unchecked model output
 
-**On screen:** Scan → score → spread → risk → exact plan → paper boundary
+**Visual:** A candidate crossing five hazards before reaching Alpaca.
 
-The scanner evaluates SPY, QQQ, and IWM. The strategy builds one-buy/one-sell
-debit spreads. The controller, not a language model, owns approval and execution.
+## 3 — One narrow, testable strategy
 
-## Slide 4 — Evidence travels with every candidate
+**SPY · QQQ · IWM**
 
-**On screen:** Score components | bid/ask/mid | quote time | IV | DTE | volume | OI
+Daily regime + intraday trend + volume + volatility + market alignment
 
-Every candidate keeps the component breakdown, both option legs, quote freshness,
-spread economics, rejection gates, and a stable plan identifier. Repeated scans
-are observations of one opportunity, not free extra trades.
+Only defined-risk bull-call or bear-put debit spreads. Production threshold: **70**.
 
-## Slide 5 — Execution is locked behind independent gates
+**Visual:** Five score components flowing into one two-leg vertical spread.
 
-**On screen:** PAPER ONLY · DRY RUN · ARM · EXACT PLAN ID
+## 4 — Authority is deliberately split
 
-The paper path also requires a paper account, an open market, fresh quotes,
-liquidity and DTE checks, buying power, one contract, one open position, a valid
-defined-risk debit spread, and maximum-loss approval. No flag bypasses a hard gate.
+`scanner → spread builder → risk critic → exact plan → Alpaca MCP`
 
-## Slide 6 — The dashboard makes state legible
+The explainer writes words. Deterministic code owns score, legs, size and permission.
 
-**On screen:** RUNNING/STOPPED/STALE/ERROR heartbeat and SSE timeline
+**Visual:** Put the optional OpenAI explainer above the path with a dotted, read-only arrow.
 
-Separate cards show simulation, hypothetical shadow outcomes, approved plans,
-acknowledged orders, fills, and realized P&L. The default dashboard is read-only;
-operator mutations require a bearer token held only in browser memory/session storage.
+## 5 — The order boundary is exact
 
-## Slide 7 — OpenAI explains; it does not decide
+**PAPER ONLY · FRESH QUOTES · ONE CONTRACT · FIVE-MINUTE PLAN**
 
-**On screen:** Structured facts in → strict JSON explanation out
+Recheck market, liquidity, DTE, buying power, position limits, price drift and maximum loss.
 
-The optional Trade Thesis & Risk Explainer receives only validated scanner, spread,
-and risk facts. It returns thesis, supporting signals, risks, invalidation, and
-explanation. A deterministic fallback is labelled when the key is absent or the
-API fails. The explanation cannot alter score, threshold, legs, quantity, risk, or
-execution.
+**Visual:** A locked `plan_id` card containing two OCC symbols and a limit debit.
 
-## Slide 8 — The first paper entry crossed every boundary
+## 6 — Built on Alpaca, end to end
 
-**On screen:** IWM bear put spread · 1 contract · $2.62 fill · $262 debit at risk
+- Trading + Market Data APIs
+- Official Alpaca MCP order boundary
+- CLI preflight, replay and evidence reports
+- FastAPI control plane + SSE dashboard
+- Durable journal + restart reconciliation
 
-On August 31, Alpaca acknowledged and filled the exact reviewed exploration plan:
-long the 292.5 put and short the 284 put, expiring September 25. The approved debit
-was $2.65 and the provider-backed fill was $2.62, three dollars better for one
-contract. This is one two-leg spread—not two trades. Provider fees were not reported.
+**Visual:** One compact system diagram, not technology logos scattered across the slide.
 
-## Slide 9 — Live evidence argues against forcing more trades
+## 7 — The shadow ledger is the research loop
 
-**On screen:** 16 opportunities · 86 reprices · threshold 40: 5 outcomes, −$225.90
+**Rejected trades still teach us.**
 
-At the August 31 close, the open IWM spread had a conservative executable credit of
-$2.35: −$27 unrealized, or −10.3%, with no exit trigger. Five independent threshold-40
-outcomes had 0% wins and −$45.18 expectancy. The sample is still too small to optimize,
-but it is strong evidence not to lower the fixed production threshold of 70.
+Same legs repriced at 15 / 30 / 60 minutes
 
-## Slide 10 — One provider-backed exit completes the proof
+Ask to enter · bid to exit · repeated scans grouped as one opportunity
 
-**On screen:** Approved → submitted → acknowledged → filled → monitored → **exit pending**
+**Visual:** Selected and rejected candidates branching into separate, clearly labelled evidence lanes.
 
-The entry half is proven. VegaGuard resumes one-minute guardian checks when Alpaca
-opens September 1 at 9:30 AM ET / 7:00 PM IST. It will close only on the existing
-+50% target, −35% stop, time/expiry rule, or another documented deterministic exit.
-Until Alpaca reports the exit fill, P&L remains unrealized and the lifecycle remains
-open. No second spread can enter while this one is open.
+## 8 — One real paper lifecycle
+
+`approved → submitted → acknowledged → filled → monitored → exit filled`
+
+IWM Sep. 25 292.5/284 bear-put spread · one contract
+
+**Visual:** Use the sanitized dashboard timeline. Redact account, plan and provider IDs.
+
+## 9 — P&L, without the victory lap
+
+| Entry debit | Exit credit | Gross P&L | MAE | MFE |
+| ---: | ---: | ---: | ---: | ---: |
+| $2.62 | $2.64 | **+$2.00** | −$85 | +$20 |
+
+Fees were not reported, so after-fee P&L is unknown. The exit was operator-authorized to complete the hackathon lifecycle.
+
+**Visual:** The five numbers above, large and uncluttered.
+
+## 10 — What VegaGuard proves
+
+**Autonomy needs an audit trail, not a blank cheque.**
+
+- Complete provider-backed paper workflow
+- Simulation, shadow evidence and fills stay separate
+- One trade does not change the production strategy
+
+`186 tests · Ruff clean · execution locked by default`
+
+**Visual:** Dashboard overview with the lifecycle complete and safety lock visible.
+
+## Screenshot checklist
+
+- Use the local `/social` view or the read-only dashboard state.
+- Show `PAPER ONLY`, lifecycle completion and realized P&L in one frame.
+- Crop all account IDs, bearer tokens, API keys, `plan_id` values and provider order IDs.
+- Keep the operator token field empty.
+- Do not show hypothetical P&L without its label.

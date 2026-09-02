@@ -81,6 +81,8 @@ def test_shadow_ledger_is_immutable_and_dashboard_reads_it(tmp_path):
         "realized_paper_trade_count": 0,
         "realized_paper_pnl_before_fees": 0,
         "realized_paper_pnl_after_fees": None,
+        "realized_paper_pnl_display": 0,
+        "realized_paper_pnl_basis": "no_completed_trades",
         "hypothetical_reprice_count": 0,
         "overdue_reprice_count": 0,
         "risk_budget_rejection_count": 0,
@@ -222,6 +224,44 @@ def test_dashboard_reports_the_latest_open_position_mark(tmp_path):
     assert dashboard_state(journal)["summary"]["open_position_unrealized_pnl"] == 42.5
 
 
+def test_dashboard_shows_gross_pnl_and_clears_marks_after_completed_exit(tmp_path):
+    journal = DecisionJournal(tmp_path / "journal.jsonl")
+    trade_plan = _plan()
+    journal.record_entry_fill(
+        trade_plan,
+        filled_price=1.3,
+        source="test",
+        provider_order_id="paper-entry",
+    )
+    journal.append(
+        JournalEntry(event="position_mark", plan=trade_plan, payload={"unrealized_pnl": 42.5})
+    )
+    exit_plan = trade_plan.closing_plan(executable_credit=1.8)
+    journal.append(
+        JournalEntry(
+            event="exit_fill_reconciled",
+            plan=exit_plan,
+            payload={
+                "filled_price": 1.8,
+                "reason": "operator_completion",
+                "provider_order_id": "paper-exit",
+                "realized_pnl_before_fees": 50.0,
+                "realized_pnl_after_fees": None,
+                "fees_status": "not_reported_by_alpaca",
+            },
+        )
+    )
+
+    summary = dashboard_state(journal)["summary"]
+
+    assert summary["realized_paper_trade_count"] == 1
+    assert summary["realized_paper_pnl_before_fees"] == 50.0
+    assert summary["realized_paper_pnl_after_fees"] is None
+    assert summary["realized_paper_pnl_display"] == 50.0
+    assert summary["realized_paper_pnl_basis"] == "gross_before_unreported_fees"
+    assert summary["open_position_unrealized_pnl"] == 0
+
+
 def test_dashboard_reports_scheduler_never_started_and_stale_states(tmp_path):
     journal = DecisionJournal(tmp_path / "journal.jsonl")
     assert dashboard_state(journal)["scheduler"] == {
@@ -318,6 +358,10 @@ def test_social_dashboard_is_read_only_sanitized_proof_of_work():
         "paper session monitor",
         "PAPER ACCOUNT",
         "EXIT PENDING",
+        "LIFECYCLE COMPLETE",
+        "GROSS BEFORE FEES",
+        "realized_paper_pnl_display",
+        "exit-step",
         "Agent event log",
         "UNREALIZED",
         "EventSource('/events')",

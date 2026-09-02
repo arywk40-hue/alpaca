@@ -1,82 +1,100 @@
-# Hackathon submission package
+# VegaGuard hackathon submission
 
-## Listing
+## Submission fields
 
-- **Project title:** VegaGuard — Auditable Autonomous Options Risk Committee
-- **Short description:** A paper-only autonomous agent that finds ETF options opportunities, constructs defined-risk debit spreads, enforces deterministic risk, executes through Alpaca MCP only after exact-plan approval, and preserves a live audit trail.
-- **Technology tags:** Python, FastAPI, Alpaca Trading API, Alpaca MCP, options, SSE, SQLite, Pydantic, OpenAI (optional)
-- **Category tags:** AI trading agents, risk management, developer tools, paper trading
-- **Submission account ID:** sourced from `ALPACA_ACCOUNT_ID`; leave blank in public Git and supply the dedicated paper-account ID only in the submission form.
+**Project name**
 
-## Submission fields (copy/paste)
+VegaGuard — Auditable Autonomous Options Risk Committee
 
-- **Project name:** VegaGuard — Auditable Autonomous Options Risk Committee
-- **One-line pitch:** A paper-only options agent that turns fresh ETF signals into explainable, defined-risk plans without giving an LLM execution authority.
-- **Demo URL:** Run locally with `vegaguard replay` and the FastAPI dashboard; no public deployment is required for the offline demo.
-- **Repository:** This repository, with credentials supplied only through the local environment.
-- **Cover image:** [`assets/vegaguard-cover-v1.png`](../assets/vegaguard-cover-v1.png)
-- **Disclosure:** Replay and shadow numbers are hypothetical or simulated. One Alpaca paper entry fill is provider-backed; its P&L remains unrealized until a provider-backed exit fill is journaled.
-- **Account ID:** enter the dedicated Alpaca paper-account ID in the private submission form only; never commit it or include API keys in the repository.
+**One-line pitch**
+
+VegaGuard turns fresh ETF signals into defined-risk paper option spreads while keeping the model outside the execution authority boundary.
+
+**Short description**
+
+VegaGuard scans SPY, QQQ and IWM, validates live option quotes, builds one-contract debit spreads, applies deterministic risk checks, and routes an explicitly approved plan through Alpaca MCP. A live dashboard shows every decision, rejection, order update and P&L event without mixing simulation, shadow research and paper fills.
+
+**Repository**
+
+Use this repository URL in the submission form.
+
+**Cover image**
+
+[`assets/vegaguard-cover-v1.png`](../assets/vegaguard-cover-v1.png)
+
+**Account ID**
+
+Enter the dedicated Alpaca paper-account ID only in the private submission field. Do not add it to Git, screenshots or video.
 
 ## Long description
 
-VegaGuard separates reasoning from authority. A deterministic scanner evaluates SPY, QQQ and IWM, validates fresh option quotes and constructs only one-buy/one-sell debit spreads. An optional language model explains an already bounded opportunity; it cannot override the scanner, select arbitrary contracts or bypass risk. Allocation and execution remain deterministic.
+Most trading-agent demos focus on the signal. VegaGuard focuses on the handoff between a signal and an order—the point where stale data, changed legs or an unchecked model response can turn a plausible idea into the wrong trade.
 
-Alpaca paper REST provides account, clock, position and market evidence. Alpaca MCP is the sole entry/exit order boundary and only `place_option_order` is allowed for execution. Every entry is bound to a short-lived `plan_id`, an idempotent `client_order_id`, and its exact reviewed legs. The backend revalidates the market and fresh quote economics immediately before an explicitly armed submission.
+The scanner scores liquid ETFs from daily regime, intraday trend, volume confirmation, volatility state and market alignment. A qualifying direction can create only a defined-risk vertical debit spread. The risk critic then checks quote age, liquidity, DTE, buying power, position limits, spread structure and maximum loss. Approval is tied to the exact legs and quantity in a five-minute `plan_id`; submission revalidates those legs against fresh quotes.
 
-The dashboard owns the scheduler and paper update monitor, streams the JSONL/SQLite timeline over SSE, and exposes start, stop, simulation, arm, disarm and emergency-stop controls. It clearly separates fixture simulation, hypothetical shadow outcomes, plans, acknowledged paper orders, fills and fill-derived realized P&L.
+Alpaca's Trading and Market Data APIs provide account, clock, position, order and quote evidence. The official Alpaca MCP server is the order boundary, limited to the option-order tool. The CLI handles preflight, replay, live scans, lifecycle evidence and session reports. FastAPI powers the local operator dashboard, and server-sent events keep its timeline live.
 
-## Safety and P&L claims
+The optional OpenAI explainer receives only validated facts and returns a strict JSON thesis, signals, risks, invalidation and explanation. It is advisory. It cannot change the score, threshold, legs, size, risk result or execution state. With no key or on failure, VegaGuard uses a labelled deterministic fallback.
 
-- The application refuses non-paper configuration and hardcodes the Alpaca paper endpoint.
-- Defaults are `ALLOW_ORDER_EXECUTION=false`, `DRY_RUN=true`, `EXPLORATION_MODE=false` and production threshold 70.
-- Exploration is separately labelled, one contract, one open position, and retains every hard gate.
-- Actual gross P&L is `(exit fill credit − entry fill debit) × 100 × quantity`.
-- Provider fees are subtracted only when reported; otherwise net P&L remains unknown.
-- Fill-to-limit slippage and observed quote-mark MAE/MFE are separate fields.
-- Simulation and shadow results are never paper fills or realized P&L.
+VegaGuard also keeps a counterfactual shadow ledger. Repeated scans of the same legs are grouped as observations of one opportunity, then repriced after 15, 30 and 60 minutes using conservative ask-to-enter and bid-to-exit accounting. Those results are always labelled hypothetical and remain separate from Alpaca fills.
 
-## Reproducible judge demo
+## Verified paper result
+
+VegaGuard completed one Alpaca paper lifecycle:
+
+| Item | Verified value |
+| --- | --- |
+| Structure | IWM 292.5/284 bear-put debit spread, Sep. 25 expiry |
+| Size | One spread / one contract per leg |
+| Plan | Exploration, score −65, threshold 40 |
+| Entry | $2.62 debit on Aug. 31, 2026 at 16:44:20 UTC |
+| Exit | $2.64 credit on Sep. 1, 2026 at 14:47:30 UTC |
+| Gross realized paper P&L | **+$2.00** |
+| Fees | Not reported by Alpaca; after-fee P&L is unknown |
+| Observed MAE / MFE | −$85 / +$20 |
+| Exit reason | Operator-authorized hackathon lifecycle completion |
+
+This is a complete provider-backed paper workflow, not evidence that the strategy has a durable edge. The result is presented without an annualized return, win-rate claim or invented fees. Production remains at its original threshold of 70.
+
+Public artifacts redact account and provider identifiers. The local append-only journal retains the `plan_id`, client order IDs, Alpaca order IDs, fill timestamps and reconciliation events. Run `vegaguard live lifecycle-evidence` to reproduce the report from that journal.
+
+## Why it stands out
+
+- **Performance:** one completed, positive paper lifecycle with fill-derived gross P&L and explicit fee uncertainty.
+- **Technology:** Alpaca data and trading APIs, official Alpaca MCP execution, CLI operations, FastAPI/SSE control plane and durable reconciliation.
+- **Originality:** a model can explain a trade but cannot authorize one; the shadow ledger evaluates rejected alternatives without pretending they were fills.
+- **Execution:** one dashboard tells the story from scan to plan, order, monitoring, exit and P&L, with simulation and paper evidence visibly separated.
+
+## Three-minute demo route
+
+1. Open the dashboard and point out `PAPER ONLY`, the safety state and separate evidence counters.
+2. Run `vegaguard replay` and show that simulation never increments paper fills.
+3. Open one candidate to show score components, option quotes, risk math and exact-plan binding.
+4. Show the Alpaca paper lifecycle timeline and the `+$2.00 before fees` result.
+5. Run `vegaguard live lifecycle-evidence` and close on the authority boundary: explanation is flexible; execution is deterministic.
+
+## Reproduce locally
 
 ```bash
 uv sync --extra dev
-ruff format --check .
-ruff check .
-pytest -q
-vegaguard replay
-PYTHONPATH=src uvicorn vegaguard.api:app --host 127.0.0.1 --port 8000
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+.venv/bin/vegaguard replay
+PYTHONPATH=src .venv/bin/python -m uvicorn vegaguard.api:app \
+  --host 127.0.0.1 --port 8000
 ```
 
-`vegaguard replay` is credential-free and deterministically shows `SIMULATION_REPLAY → scan → candidate → risk decision → simulated order → simulated fill → monitoring → simulated exit → HYPOTHETICAL P&L`. Its paper counters remain zero.
+The replay is a fixture-backed code-path demonstration, not historical performance. With the local paper journal present, this read-only command reports completed provider-backed trades:
 
-With dedicated paper credentials, run `vegaguard preflight` and a read-only cycle. A live dry-run may generate a reviewed plan without invoking MCP. Follow `docs/OPERATOR_RUNBOOK.md` for the external paper acceptance sequence.
-
-## Judge evidence checklist
-
-- [ ] Public README setup succeeds without secrets.
-- [ ] Tests and deterministic replay pass offline.
-- [ ] Dashboard labels simulation, hypothetical and paper evidence separately.
-- [ ] Preflight confirms paper account, clock, option data and required MCP schemas.
-- [ ] Scanner shows numeric score components or explicit abstention reasons.
-- [ ] Plan shows exact legs, quotes, DTE, IV, debit, loss/profit, breakeven and risk math.
-- [ ] Arm/disarm and emergency stop are visible; defaults remain locked.
-- [x] Provider order ID and acknowledgement are journaled for the IWM paper entry.
-- [x] The IWM entry fill at a $2.62 debit is journaled and monitored.
-- [ ] Exit provider fill and realized P&L are journaled.
-- [ ] Any unverified item is described as readiness, not completed evidence.
-
-## 10-slide outline and 6–7 minute video
-
-Use [`HACKATHON_DECK_10_SLIDES.md`](HACKATHON_DECK_10_SLIDES.md) for the on-screen
-copy and [`HACKATHON_NARRATION.md`](HACKATHON_NARRATION.md) for the complete script.
-The ten beats are: problem; authority boundary; deterministic committee; evidence
-ledger; independent safety gates; dashboard; bounded OpenAI explainer; offline
-replay; honest research limits; and the next paper-lifecycle proof.
-
-The replay can be shown in a shorter three-minute cut, but the supplied narration
-is paced for approximately 6:40 and keeps every simulation and hypothetical result
-clearly separate from paper fills.
+```bash
+.venv/bin/vegaguard live lifecycle-evidence
+```
 
 ## Honest limitations
 
-No real-money path exists. Historical options evidence remains limited by the supplied Alpaca entitlement/cache. Small fixtures are deterministic accounting demonstrations, not performance claims. The first Alpaca paper entry is provider-backed, but the complete lifecycle remains open until `vegaguard live lifecycle-evidence` contains its provider-backed exit fill and realized P&L.
+- One completed trade is not a statistically useful performance sample.
+- Alpaca did not report fees for the completed lifecycle, so after-fee P&L is unknown.
+- The historical quote endpoint available to this account did not provide the point-in-time option history needed for defensible threshold optimization.
+- The demonstrated exit was operator-authorized to complete the hackathon lifecycle; automated exit rules and restart reconciliation are implemented and tested, but that exit was not triggered by a profit, stop or time rule.
+- VegaGuard is paper-only and has no real-money execution path.

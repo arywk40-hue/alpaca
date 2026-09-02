@@ -8,14 +8,14 @@ API keys, bearer tokens, provider order IDs and exact plan IDs.
 
 Open `http://127.0.0.1:8001/social`. This dedicated read-only trading-terminal view
 shows the scheduler state, market state, last/next cycle, durable event count, opportunities,
-reprices, paper entry fill, open unrealized P&L, lifecycle progress and sanitized live
+reprices, paper fills, realized P&L, lifecycle progress and sanitized live
 timeline. It contains no operator controls or identifiers.
 
 Use these five crops with the posts below:
 
 1. Full hero and `PAPER ONLY` badges.
 2. Heartbeat plus the six evidence metrics.
-3. Paper lifecycle strip ending at `EXIT PENDING`.
+3. Completed paper lifecycle strip and `+$2.00 GROSS BEFORE FEES`.
 4. Live agent timeline during an open-market scan.
 5. Production-threshold and hypothetical-research strip.
 
@@ -80,28 +80,28 @@ No naked options. No real-money path. No threshold changes based on one lucky tr
 **Alt text:** Five market-signal components feeding a deterministic risk gate before
 a defined-risk options spread.
 
-## Post 4 — First provider-backed paper entry
+## Post 4 — First complete paper lifecycle
 
-**Visual:** Sanitized lifecycle timeline showing acknowledged, filled and monitored.
+**Visual:** Sanitized lifecycle timeline showing entry, monitoring and filled exit.
 Do not show the provider order ID or account identifier.
 
-VegaGuard has completed the entry half of its first genuine Alpaca paper lifecycle.
+VegaGuard completed its first Alpaca paper-options lifecycle.
 
 The reviewed IWM bear-put debit spread—long the 292.5 put and short the 284 put,
 expiring September 25—was acknowledged and filled as one two-leg order at a $2.62
-debit for one contract. The approved limit was $2.65.
+debit for one contract. The closing spread filled at a $2.64 credit.
 
-At the August 31 close, its conservative executable mark was $2.35: **−$27
-unrealized**. The guardian correctly held because neither the documented profit
-target nor stop had triggered.
+That is **+$2.00 gross realized paper P&L before fees**. Alpaca did not report fees,
+so after-fee P&L is unknown. The exit was operator-authorized to complete the
+hackathon lifecycle; it was not a strategy profit-target or stop trigger.
 
-This is not a profit claim. Realized paper P&L remains zero until Alpaca reports a
-provider-backed exit fill.
+One trade proves the order-to-P&L workflow, not a repeatable edge. The production
+threshold remains unchanged.
 
 #Alpaca #PaperTrading #OptionsTrading #TradingTech #Auditability
 
-**Alt text:** Sanitized paper-trade lifecycle showing an IWM spread acknowledged,
-filled and under monitoring, with exit pending.
+**Alt text:** Sanitized paper-trade lifecycle showing an IWM spread entry and exit,
+with two dollars gross paper P&L before unreported fees.
 
 ## Post 5 — What the evidence changed
 
@@ -131,9 +131,8 @@ thresholds, with production threshold 70 unchanged.
 1. Project launch and cover image.
 2. Dashboard/operator controls.
 3. Strategy and deterministic safety gates.
-4. Provider-backed entry evidence with the unrealized-P&L disclosure.
+4. Complete provider-backed lifecycle with the gross-before-fees disclosure.
 5. Shadow research and why the production threshold did not change.
 
-After the IWM position closes, update Post 4 with the provider-reported exit fill,
-fees if available, and realized paper P&L. Never replace the word `unrealized` before
-that evidence exists.
+Post 4 is the only performance post. Keep the one-trade limitation and fee disclosure
+whenever it is reused.

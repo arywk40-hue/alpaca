@@ -1,12 +1,33 @@
 # Hackathon demo
 
-1. Show `.env.example`: paper mode is mandatory; execution, exploration and session arming are off by default.
-2. Run `vegaguard replay`. Show the deterministic `SIMULATION_REPLAY` lifecycle and zero paper counters.
-3. Start the API and use **Start Shadow Agent**. Show session/process heartbeat, last/next cycle, market status and SSE timeline.
-4. With paper credentials, run `vegaguard preflight` to show account-ID validation, option data and discovered Alpaca MCP tools without an order call.
-5. During market hours, show SPY/QQQ/IWM score components or honest abstention reasons. Open one dry-run plan and explain exact legs, quote timestamps, debit, loss/profit, buying-power and risk calculations.
-6. Demonstrate arm, disarm and emergency-stop behavior without submitting. Explain the fresh exact-leg quote/debit-drift revalidation and one-attempt arm.
-7. Show 15/30/60-minute `HYPOTHETICAL` shadow evidence separately from provider-backed paper lifecycle evidence.
-8. Show `vegaguard live lifecycle-evidence`. If it lacks actual entry and exit fills, state that the paper lifecycle is ready but not externally proven; never substitute simulation P&L.
+Target: three minutes, one story, no live order submission.
 
-The autonomous claim is bounded autonomy: the system evaluates, selects, risk-checks, plans, journals, monitors, and exits within deterministic paper-trading constraints. It is not unconstrained discretionary trading.
+## Before recording
+
+```bash
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+.venv/bin/vegaguard replay
+PYTHONPATH=src .venv/bin/python -m uvicorn vegaguard.api:app \
+  --host 127.0.0.1 --port 8000
+```
+
+Keep execution locked. Hide `.env`, account identifiers, tokens, plan IDs and provider order IDs.
+
+## Recording route
+
+1. **Open with the result.** Show the dashboard's completed IWM paper lifecycle and `+$2.00 gross before fees`. Say that one trade proves the workflow, not the strategy.
+2. **Show one candidate.** Point to the five score components, both option legs, quote timestamps, DTE, debit and maximum loss.
+3. **Show the authority boundary.** Explain that the OpenAI/fallback thesis is advisory; deterministic risk and an exact five-minute plan own execution.
+4. **Show Alpaca usage.** Briefly show preflight, the discovered MCP option-order boundary and the provider-backed acknowledgement/fill events. Do not run an order.
+5. **Show the research lane.** Open the 15/30/60-minute shadow reprices and make the `HYPOTHETICAL` label visible.
+6. **Run the proof command.** Use `.venv/bin/vegaguard live lifecycle-evidence` and point out entry debit, exit credit, gross P&L and unknown fees.
+7. **Close on safety.** Show execution locked and say: “The model explains; the deterministic system decides.”
+
+## Claims to avoid
+
+- Do not call the `+$2.00` result net profit; Alpaca did not report fees.
+- Do not report a win rate from one trade.
+- Do not describe the operator-authorized exit as an autonomous strategy trigger.
+- Do not mix replay or shadow P&L with Alpaca paper P&L.
+- Do not imply the production threshold changed; it remains 70.
