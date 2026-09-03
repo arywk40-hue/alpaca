@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "mode": "SIMULATION_REPLAY",
+  "banner": "SIMULATION REPLAY — READ-ONLY DEMO — NO ORDER EXECUTION",
+  "evidence_source": "SANITIZED_PROVIDER_BACKED_PAPER_EVIDENCE_REPLAY",
+  "disclosure": "This hosted page replays a checked-in sanitized snapshot. It is not connected to Alpaca and does not run a persistent scheduler.",
+  "safety": {
+    "paper_only": true,
+    "order_execution_enabled": false,
+    "dry_run": true,
+    "mcp_calls_enabled": false,
+    "scheduler_available": false,
+    "mutating_endpoints_available": false
+  },
+  "summary": {
+    "approved_decision_count": 1,
+    "rejected_decision_count": 2,
+    "hypothetical_reprice_count": 3,
+    "completed_paper_lifecycle_count": 1
+  },
+  "performance": {
+    "underlying": "IWM",
+    "structure": "Sep 25 292.5/284 bear-put debit spread",
+    "quantity": 1,
+    "entry_debit": 2.62,
+    "debit_paid_usd": 262.0,
+    "entry_filled_at": "2026-08-31T16:44:20.777123Z",
+    "exit_credit": 2.64,
+    "credit_received_usd": 264.0,
+    "exit_filled_at": "2026-09-01T14:47:30.976839Z",
+    "gross_realized_pnl_usd": 2.0,
+    "fees_usd": null,
+    "net_realized_pnl_usd": null,
+    "fees_status": "not_reported_by_alpaca",
+    "maximum_adverse_excursion_usd": -85.0,
+    "maximum_favorable_excursion_usd": 20.0,
+    "exit_reason": "operator_authorized_hackathon_lifecycle_completion"
+  },
+  "decisions": [
+    {
+      "underlying": "IWM",
+      "decision": "approved_exploration_plan",
+      "score": -65,
+      "threshold": 40,
+      "regime": "bearish_exploration",
+      "spread": "292.5/284 bear-put debit spread",
+      "maximum_loss_usd": 265.0,
+      "reason": "Fresh defined-risk spread passed deterministic account, quote, liquidity and risk gates."
+    },
+    {
+      "underlying": "SPY",
+      "decision": "rejected_no_valid_spread",
+      "score": 65,
+      "threshold": 40,
+      "regime": "bullish_exploration",
+      "spread": null,
+      "maximum_loss_usd": null,
+      "reason": "Exploration threshold passed, but no valid defined-risk spread was available."
+    },
+    {
+      "underlying": "QQQ",
+      "decision": "rejected_risk_budget",
+      "score": 65,
+      "threshold": 40,
+      "regime": "bullish_exploration",
+      "spread": "quote-backed debit spread",
+      "maximum_loss_usd": 565.0,
+      "reason": "Required maximum loss of $565 exceeded the configured $500 per-trade limit."
+    }
+  ],
+  "shadow_reprices": [
+    {
+      "underlying": "IWM",
+      "horizon_minutes": 15,
+      "status": "unavailable",
+      "hypothetical": true,
+      "reason": "The deadline passed before a valid fresh quote was observed."
+    },
+    {
+      "underlying": "IWM",
+      "horizon_minutes": 30,
+      "status": "unavailable",
+      "hypothetical": true,
+      "reason": "The deadline passed before a valid fresh quote was observed."
+    },
+    {
+      "underlying": "IWM",
+      "horizon_minutes": 60,
+      "status": "priced",
+      "hypothetical": true,
+      "entry_method": "long ask minus short bid",
+      "exit_method": "long bid minus short ask",
+      "entry_debit": 2.65,
+      "exit_credit": 2.52,
+      "net_hypothetical_pnl_usd": -13.0,
+      "quote_observed_at": "2026-08-31T17:45:19.147377Z"
+    }
+  ],
+  "workflow_events": [
+    {
+      "stage": "scan",
+      "title": "IWM candidate scored",
+      "detail": "Score −65; exploration threshold 40.",
+      "timestamp": "2026-08-31T16:42:40.652357Z"
+    },
+    {
+      "stage": "risk",
+      "title": "Defined-risk spread approved",
+      "detail": "One contract; approved maximum loss $265.",
+      "timestamp": "2026-08-31T16:42:41.695168Z"
+    },
+    {
+      "stage": "revalidation",
+      "title": "Exact legs repriced",
+      "detail": "Fresh quotes and debit drift passed before submission.",
+      "timestamp": "2026-08-31T16:44:12.346520Z"
+    },
+    {
+      "stage": "entry",
+      "title": "Paper spread filled",
+      "detail": "$2.62 debit for one two-leg IWM spread.",
+      "timestamp": "2026-08-31T16:44:20.777123Z"
+    },
+    {
+      "stage": "monitoring",
+      "title": "Position guardian observed the spread",
+      "detail": "Across 127 conservative marks, observed MAE was −$85 and MFE was +$20.",
+      "timestamp": "2026-09-01T14:21:09.258396Z"
+    },
+    {
+      "stage": "exit",
+      "title": "Closing paper spread filled",
+      "detail": "$2.64 credit; operator-authorized lifecycle completion.",
+      "timestamp": "2026-09-01T14:47:30.976839Z"
+    },
+    {
+      "stage": "pnl",
+      "title": "Fill-to-fill P&L reconciled",
+      "detail": "+$2 gross before fees; net remains unknown.",
+      "timestamp": "2026-09-01T14:47:30.976839Z"
+    }
+  ]
+}

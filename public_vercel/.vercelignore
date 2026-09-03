@@ -1,0 +1,7 @@
+# Upload only the credential-free public replay. Everything else—including
+# local trading code, runtime evidence, credentials and reports—is denied.
+/*
+!app.py
+!public_demo_snapshot.json
+!requirements.txt
+!vercel.json
